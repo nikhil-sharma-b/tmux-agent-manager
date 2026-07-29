@@ -330,6 +330,9 @@ for file in "$root/bin/tmux-agent" "$root"/scripts/*.sh "$root"/scripts/adapters
   "$root/tmux-agent-manager.tmux"; do
   bash -n "$file"
 done
-node --check "$root/scripts/adapters/opencode.js"
+# The adapter is an ES module loaded by OpenCode, but `node --check` treats a
+# bare .js file as CommonJS. A .mjs copy gets it parsed as the module it is.
+cp "$root/scripts/adapters/opencode.js" "$tmp/opencode-adapter.mjs"
+node --check "$tmp/opencode-adapter.mjs"
 
 printf 'PASS\n'
