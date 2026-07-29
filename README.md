@@ -42,13 +42,13 @@ Sidebar controls:
 - `n`: create an agent
 - `h`: toggle live agents and history
 - `s`: toggle native Claude, Codex, and OpenCode sessions
-- `o`: open detailed popup
+- `/`, `f`, or `o`: fuzzy search the current live, history, or saved view in the sidebar pane
 - `r`: refresh
 - `q`: hide sidebar
 
 Press `prefix + Ctrl-a` to open the detailed popup directly. Its existing rename, stop, preview, and refresh controls remain available.
 
-In the popup, use `Ctrl-s` for native saved sessions, `Ctrl-h` for manager history, and `Ctrl-l` to return to live agents.
+The popup fuzzy-searches its current scope. Use `Ctrl-s` for native saved sessions, `Ctrl-h` for manager history, `Ctrl-l` for live agents, and `Ctrl-r` to refresh the current scope.
 
 ## States
 

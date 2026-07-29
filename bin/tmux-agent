@@ -48,7 +48,7 @@ case $command in
     fi
     ;;
   finder)
-    exec "$plugin_dir/scripts/finder.sh"
+    exec "$plugin_dir/scripts/finder.sh" "$@"
     ;;
   sidebar)
     exec "$plugin_dir/scripts/sidebar-toggle.sh" toggle "${TMUX_PANE:-}" "${TMUX_AGENT_CLIENT:-}"

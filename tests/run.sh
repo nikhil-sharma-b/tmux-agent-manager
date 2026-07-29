@@ -170,8 +170,22 @@ nav_a_registration=$("$root/bin/tmux-agent" register --harness claude --label na
 IFS=$'\t' read -r _ nav_a_run <<<"$nav_a_registration"
 nav_b_registration=$("$root/bin/tmux-agent" register --harness claude --label nav-b --pane "$nav_b")
 IFS=$'\t' read -r _ nav_b_run <<<"$nav_b_registration"
+finder_snapshot="$tmp/finder"
+mkdir -p "$finder_snapshot"
+finder_live=$("$root/scripts/finder-collect.sh" "$finder_snapshot" live)
+assert_contains "$finder_live" 'nav-a'
+finder_history=$("$root/scripts/finder-collect.sh" "$finder_snapshot" history)
+assert_contains "$finder_history" 'fix auth'
+finder_saved=$(XDG_CACHE_HOME="$native/cache" \
+  "$root/scripts/finder-collect.sh" "$finder_snapshot" sessions)
+assert_contains "$finder_saved" 'Claude saved'
+finder_saved=$(XDG_CACHE_HOME="$native/cache" \
+  "$root/scripts/finder-collect.sh" "$finder_snapshot")
+assert_contains "$finder_saved" 'OpenCode saved'
+[[ $(<"$finder_snapshot/mode") == sessions ]] || fail 'finder refresh lost current scope'
 tmux set-environment -g XDG_RUNTIME_DIR "$XDG_RUNTIME_DIR"
 tmux set-environment -g XDG_STATE_HOME "$XDG_STATE_HOME"
+tmux set-environment -g XDG_CACHE_HOME "$native/cache"
 tmux set-environment -g HOME "$HOME"
 
 tmux run-shell "$root/tmux-agent-manager.tmux"
@@ -255,6 +269,21 @@ for _ in {1..50}; do
   sleep 0.01
 done
 [[ $mode == sessions ]] || fail 'sidebar did not restore sessions mode'
+tmux send-keys -t "$replacement" /
+for _ in {1..100}; do
+  finder_screen=$(tmux capture-pane -p -t "$replacement" 2>/dev/null || true)
+  [[ $finder_screen == *'scope: save'* ]] && break
+  sleep 0.02
+done
+[[ $finder_screen == *'scope: save'* ]] || fail 'sidebar fuzzy search did not open in place'
+tmux send-keys -t "$replacement" Escape
+for _ in {1..50}; do
+  sidebar_screen=$(tmux capture-pane -p -t "$replacement" 2>/dev/null || true)
+  [[ $sidebar_screen == *'AI agents'* ]] && break
+  sleep 0.01
+done
+tmux display-message -p -t "$replacement" '#{pane_id}' >/dev/null 2>&1 \
+  || fail 'cancelled fuzzy search closed sidebar'
 "$root/scripts/sidebar-toggle.sh" hide "$target" ''
 
 for file in "$root/bin/tmux-agent" "$root"/scripts/*.sh "$root"/scripts/adapters/*.sh \

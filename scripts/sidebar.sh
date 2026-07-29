@@ -12,6 +12,8 @@ case $mode in
 esac
 selected=0
 selected_run=''
+last_signature=''
+force_redraw=1
 interval=$(agent_option '@agent-manager-sidebar-interval' '1')
 [[ $interval =~ ^[1-9][0-9]*$ ]] || interval=1
 
@@ -29,13 +31,9 @@ printf '\033[?1049h\033[?25l'
 persist_mode
 
 open_finder() {
-  local width height border title
-  width=$(agent_option '@agent-manager-width' '80%')
-  height=$(agent_option '@agent-manager-height' '70%')
-  border=$(agent_option '@agent-manager-border-style' 'fg=brightblack')
-  title=$(agent_option '@agent-manager-title' '')
-  tmux display-popup -E -w "$width" -h "$height" -b rounded -s "$border" \
-    -T "$title" -d / "$plugin_dir/bin/tmux-agent finder"
+  "$plugin_dir/bin/tmux-agent" finder "$mode" || true
+  printf '\033[?25l'
+  force_redraw=1
 }
 
 create_agent() {
@@ -49,6 +47,7 @@ create_agent() {
 }
 
 refresh_rows() {
+  local geometry signature
   if [[ $mode == sessions ]]; then
     "$script_dir/native-sessions.sh" collect "$snapshot_dir" >/dev/null 2>&1 || true
   else
@@ -70,6 +69,13 @@ refresh_rows() {
     IFS=$'\t' read -r selected_run _ <<<"${rows[$selected]}"
   fi
   tmux set-option -p -t "$TMUX_PANE" @agent-manager-sidebar-selected "$selected_run" 2>/dev/null || true
+  geometry=$(tmux display-message -p -t "$TMUX_PANE" '#{pane_width}x#{pane_height}' 2>/dev/null || true)
+  signature=$(printf '%s\n' "$mode" "$geometry" "${rows[@]}")
+  if ((force_redraw == 1)) || [[ $signature != "$last_signature" ]]; then
+    dirty=1
+    force_redraw=0
+    last_signature=$signature
+  fi
 }
 
 render_rows() {
@@ -83,7 +89,7 @@ render_rows() {
   printf '\033[H\033[2J'
   printf '\033[34;1m AI agents\033[0m  \033[90m%s\033[0m\n' "$mode"
   printf '\033[90m j/k move · ↵ open · n new\033[0m\n'
-  printf '\033[90m s saved · h history · o popup\033[0m\n\n'
+  printf '\033[90m s saved · h history · / search\033[0m\n\n'
   if ((count == 0)); then
     printf ' \033[90mNo %s agents\033[0m\n' "$mode"
   else
@@ -113,8 +119,8 @@ render_rows() {
 }
 
 while true; do
+  dirty=0
   refresh_rows
-  dirty=1
   ticks=$((interval * 20))
   for ((tick = 0; tick < ticks; tick++)); do
     if ((dirty == 1)); then
@@ -163,9 +169,9 @@ while true; do
           break
           ;;
         n) create_agent; break ;;
-        o) open_finder; break ;;
+        /|f|o) open_finder; break ;;
         q) "$script_dir/sidebar-toggle.sh" hide "$TMUX_PANE" "${TMUX_AGENT_CLIENT:-}"; exit 0 ;;
-        r) break ;;
+        r) force_redraw=1; break ;;
       esac
     fi
   done
