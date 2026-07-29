@@ -39,6 +39,22 @@ export HOME="$tmp/home"
 source "$root/scripts/lib.sh"
 [[ $(truncate_text 'short label' 20) == 'short label' ]] || fail 'short label was truncated'
 [[ $(truncate_text 'long agent session label' 12) == 'long agent…' ]] || fail 'long label ellipsis incorrect'
+mkdir -p "$tmp/commands" "$tmp/no-aliases"
+printf '%s\n' '#!/usr/bin/env bash' 'exit 0' >"$tmp/commands/fish"
+printf '%s\n' '#!/usr/bin/env bash' 'exit 1' >"$tmp/no-aliases/fish"
+chmod +x "$tmp/commands/fish" "$tmp/no-aliases/fish"
+[[ $(SHELL="$tmp/commands/fish" resume_agent_alias claude) == cc ]] \
+  || fail 'Claude resume alias not preferred'
+[[ $(SHELL="$tmp/commands/fish" resume_agent_alias opencode) == oc ]] \
+  || fail 'OpenCode resume alias not preferred'
+[[ -z $(SHELL="$tmp/no-aliases/fish" resume_agent_alias claude || true) ]] \
+  || fail 'Claude missing alias not ignored'
+[[ -z $(SHELL="$tmp/no-aliases/fish" resume_agent_alias opencode || true) ]] \
+  || fail 'OpenCode missing alias not ignored'
+[[ -z $(SHELL="$tmp/commands/fish" TMUX_AGENT_CLAUDE_COMMAND=/custom/claude \
+  resume_agent_alias claude || true) ]] || fail 'Claude configured command not preserved'
+[[ -z $(SHELL="$tmp/commands/fish" TMUX_AGENT_OPENCODE_COMMAND=/custom/opencode \
+  resume_agent_alias opencode || true) ]] || fail 'OpenCode configured command not preserved'
 dedicated_run=$(new_uuid)
 dedicated_session=$(agent_session_name 'Review API' "$dedicated_run")
 TMUX_AGENT_NO_SWITCH=1 create_agent_session "$dedicated_session" "$tmp/work" 'Review API' 'sleep 60'
@@ -148,12 +164,13 @@ assert_contains "$native_catalog" 'OpenCode saved'
 mkdir -p "$native/bin"
 printf '%s\n' \
   '#!/usr/bin/env bash' \
-  'printf "%s\n" "$*" >"$NATIVE_RESUME_LOG"' \
-  'sleep 60' >"$native/bin/claude"
-chmod +x "$native/bin/claude"
+  'if [[ $2 == test* ]]; then exit 0; fi' \
+  'printf "%s\n" "$2" >"$NATIVE_RESUME_LOG"' \
+  'sleep 60' >"$native/bin/fish"
+chmod +x "$native/bin/fish"
 tmux set-environment -g PATH "$native/bin:$PATH"
+tmux set-environment -g TMUX_AGENT_SHELL "$native/bin/fish"
 tmux set-environment -g NATIVE_RESUME_LOG "$native/resume.log"
-tmux set-environment -g TMUX_AGENT_CLAUDE_COMMAND "$native/bin/claude"
 TMUX_AGENT_NO_SWITCH=1 "$root/scripts/open.sh" \
   claude-native native:claude "$tmp/work" 3000 - 0 'Claude saved'
 for _ in {1..30}; do
@@ -166,9 +183,24 @@ if [[ ! -f $native/resume.log ]]; then
   resume_debug=$(tmux capture-pane -p -t "=$resume_debug_session:agent" 2>/dev/null || true)
   fail "native Claude resume command did not start: $native_debug / $resume_debug"
 fi
-[[ $(<"$native/resume.log") == '--resume claude-native' ]] || fail 'native Claude resume arguments incorrect'
+assert_contains "$(<"$native/resume.log")" 'cc'
+assert_contains "$(<"$native/resume.log")" 'claude-native'
 resume_session=$(tmux list-sessions -F '#{session_name}' | awk '/^ai-Claude-saved-/ { print; exit }')
 [[ -n $resume_session ]] || fail 'native resume did not create dedicated session'
+tmux kill-session -t "=$resume_session"
+
+rm -f "$native/resume.log"
+TMUX_AGENT_NO_SWITCH=1 "$root/scripts/open.sh" \
+  opencode-native native:opencode "$tmp/work" 1000 - 0 'OpenCode saved'
+for _ in {1..30}; do
+  [[ -f $native/resume.log ]] && break
+  sleep 0.1
+done
+[[ -f $native/resume.log ]] || fail 'native OpenCode resume alias did not start'
+assert_contains "$(<"$native/resume.log")" 'oc'
+assert_contains "$(<"$native/resume.log")" 'opencode-native'
+resume_session=$(tmux list-sessions -F '#{session_name}' | awk '/^ai-OpenCode-saved-/ { print; exit }')
+[[ -n $resume_session ]] || fail 'native OpenCode resume did not create dedicated session'
 tmux kill-session -t "=$resume_session"
 "$root/bin/tmux-agent" reconcile
 

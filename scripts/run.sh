@@ -38,8 +38,10 @@ export TMUX_AGENT_HARNESS=$harness
 export TMUX_AGENT_PANE_ID=$TMUX_PANE
 export TMUX_AGENT_BIN="$plugin_dir/bin/tmux-agent"
 
+resume_alias=''
 case $harness in
   claude)
+    [[ -n $resume ]] && resume_alias=$(resume_agent_alias claude || true)
     command=("${TMUX_AGENT_CLAUDE_COMMAND:-claude}")
     [[ -n $resume ]] && command+=(--resume "$resume")
     ;;
@@ -48,11 +50,19 @@ case $harness in
     [[ -n $resume ]] && command+=(resume "$resume")
     ;;
   opencode)
+    [[ -n $resume ]] && resume_alias=$(resume_agent_alias opencode || true)
     command=("${TMUX_AGENT_OPENCODE_COMMAND:-opencode}")
     [[ -n $resume ]] && command+=(--session "$resume")
     ;;
 esac
 command+=("$@")
+if [[ -n $resume_alias ]]; then
+  command_line=$resume_alias
+  for argument in "${command[@]:1}"; do
+    command_line+=" $(shell_quote "$argument")"
+  done
+  command=("${TMUX_AGENT_SHELL:-$SHELL}" -ic "$command_line")
+fi
 
 set +e
 "${command[@]}"
