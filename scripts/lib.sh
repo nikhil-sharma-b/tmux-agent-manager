@@ -19,6 +19,31 @@ require_command() {
   }
 }
 
+resume_agent_alias() {
+  local harness=$1 configured alias shell=${TMUX_AGENT_SHELL:-${SHELL:-}} check
+  case $harness in
+    claude)
+      configured=${TMUX_AGENT_CLAUDE_COMMAND:-}
+      alias=cc
+      ;;
+    opencode)
+      configured=${TMUX_AGENT_OPENCODE_COMMAND:-}
+      alias=oc
+      ;;
+    *) return 1 ;;
+  esac
+
+  [[ -z $configured && -x $shell ]] || return 1
+  case ${shell##*/} in
+    fish) check="test \"(type -t $alias)\" = function" ;;
+    bash) check="kind=\$(type -t $alias); [[ \$kind == alias || \$kind == function ]]" ;;
+    zsh) check="kind=\$(whence -w $alias); [[ \$kind == *': alias' || \$kind == *': function' ]]" ;;
+    *) return 1 ;;
+  esac
+  "$shell" -ic "$check" </dev/null >/dev/null 2>&1 || return 1
+  printf '%s' "$alias"
+}
+
 new_uuid() {
   if [[ -r /proc/sys/kernel/random/uuid ]]; then
     IFS= read -r uuid </proc/sys/kernel/random/uuid
