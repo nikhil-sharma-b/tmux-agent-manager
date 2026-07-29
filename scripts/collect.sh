@@ -10,13 +10,21 @@ refresh=${3:-full}
 list_tmp="$snapshot_dir/list.tmp"
 : >"$list_tmp"
 
+dim=$(printf '\033[90m')
+reset=$(printf '\033[0m')
+
 if [[ $mode == history ]]; then
   ensure_state_dirs
-  for meta in "$(history_root)"/*.json; do
-    [[ -f $meta ]] || continue
-    jq -r '[.run_id,"history","-","-","-","0","9",(.label|gsub("[\\t\\r\\n]";" ")),"history",
-      ("\u001b[90m·\u001b[0m " + (.label|gsub("[\\t\\r\\n]";" "))),
-      ("\u001b[90m" + .harness + " · " + ((.branch // "")|gsub("[\\t\\r\\n]";" ")) + " · history\u001b[0m")]|@tsv' "$meta" >>"$list_tmp"
+  for entry in "$(history_root)"/*.json; do
+    [[ -f $entry ]] || continue
+    jq -r --arg dim "$dim" --arg reset "$reset" '
+      def clean: gsub("[\\t\\r\\n]";" ");
+      def fit: (if length > 26 then .[0:25] + "…" else . end)
+        | (if length < 26 then . + (" " * (26 - length)) else . end);
+      [.run_id,"history","-","-","-","0","9",(.label|clean),"history",
+      ($dim + "·" + $reset + " " + (.label|clean|fit)),
+      ($dim + ([.harness,((.branch // "")|clean),(.ended_at|todate|.[0:10])]
+        | map(select(. != "")) | join(" · ")) + $reset)]|@tsv' "$entry" >>"$list_tmp"
   done
 else
   [[ $refresh == fast ]] || reconcile_runs >/dev/null 2>&1 || true
@@ -44,11 +52,11 @@ else
     label=$(jq -r '.label|gsub("[\\t\\r\\n]";" ")' "$dir/meta.json")
     harness=$(jq -r '.harness' "$dir/meta.json")
     branch=$(jq -r '.branch|gsub("[\\t\\r\\n]";" ")' "$dir/meta.json")
-    suffix=''
-    [[ $unseen == 1 ]] && suffix=' · unseen'
-    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%b %-26s\t\033[90m%s · %s · %s%s\033[0m\n' \
-      "${dir##*/}" live "$session" "$window" "$pane" "$size" "$priority" "$label" "$state" "$glyph" "$label" \
-      "$harness" "${branch:--}" "$state" "$suffix" >>"$list_tmp"
+    row_meta="$state · $harness"
+    [[ -n $branch ]] && row_meta="$row_meta · $branch"
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%b %-26s\t\033[90m%s\033[0m\n' \
+      "${dir##*/}" live "$session" "$window" "$pane" "$size" "$priority" "$label" "$state" \
+      "$glyph" "$(truncate_text "$label" 26)" "$row_meta" >>"$list_tmp"
   done
 fi
 

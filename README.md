@@ -35,9 +35,9 @@ The persistent sidebar opens automatically. Press `prefix + A` to hide or reopen
 
 ## Controls
 
-Sidebar controls:
+Sidebar controls. Press `?` in the sidebar for this list in the pane:
 
-- `j` / `k`: select agent
+- `j` / `k` or arrows: select agent
 - `Enter`: jump to selected agent
 - `n`: create an agent
 - `h`: toggle live agents and history
@@ -46,9 +46,11 @@ Sidebar controls:
 - `r`: refresh
 - `q`: hide sidebar
 
-Press `prefix + Ctrl-a` to open the detailed popup directly. Its existing rename, stop, preview, and refresh controls remain available.
+The sidebar shows one line per agent: a state glyph, the label, and the state or harness on the right. The tab row marks the current scope, and the footer keeps the four main keys visible.
 
-The popup fuzzy-searches its current scope. Use `Ctrl-s` for native saved sessions, `Ctrl-h` for manager history, `Ctrl-l` for live agents, and `Ctrl-r` to refresh the current scope.
+Press `prefix + Ctrl-a` to open the detailed popup directly.
+
+The popup fuzzy-searches its current scope. Its header carries the same scope tabs plus its actions: `Ctrl-l` live, `Ctrl-h` history, `Ctrl-s` saved sessions, `Ctrl-n` new, `Ctrl-e` rename, `Ctrl-x` stop, `Ctrl-p` pane output, `Ctrl-r` refresh.
 
 ## States
 

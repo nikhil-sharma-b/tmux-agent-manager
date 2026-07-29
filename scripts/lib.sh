@@ -36,8 +36,9 @@ truncate_text() {
   local text=$1 width=$2
   if ((${#text} <= width)); then
     printf '%s' "$text"
-  elif ((width > 3)); then
-    printf '%s...' "${text:0:width-3}"
+  elif ((width > 1)); then
+    local cut=${text:0:width-1}
+    printf '%s…' "${cut%"${cut##*[! ]}"}"
   else
     printf '%s' "${text:0:width}"
   fi

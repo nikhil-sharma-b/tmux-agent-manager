@@ -16,6 +16,22 @@ scope=$mode
 [[ $scope == sessions ]] && scope=saved
 "$script_dir/finder-collect.sh" "$snapshot_dir" "$mode" >/dev/null
 
+keys='↵ open  ^n new  ^e rename  ^x stop  ^p output  ^r refresh'
+
+# Tabs name the scope switches (^l ^h ^s), so the key list only carries actions.
+# Kept to one line: change-header takes a single-line argument.
+header_for() {
+  local active=$1 tab out=''
+  for tab in live history saved; do
+    if [[ $tab == "$active" ]]; then
+      out+=$(printf '\033[1;4m%s\033[0m  ' "$tab")
+    else
+      out+=$(printf '\033[90m%s\033[0m  ' "$tab")
+    fi
+  done
+  printf '%s  \033[90m%s\033[0m' "$out" "$keys"
+}
+
 export TMUX_AGENT_SCRIPTS=$script_dir
 export TMUX_AGENT_SNAPSHOT=$snapshot_dir
 export TMUX_AGENT_CLIENT
@@ -25,9 +41,9 @@ fzf \
   --height=100% --ansi --delimiter=$'\t' --with-nth='10..' --no-multi \
   --layout=reverse --border=none --no-scrollbar --separator=' ' \
   --pointer='▌' --marker=' ' \
-  --color='fg:-1,bg:-1,hl:4,fg+:-1:regular,bg+:-1,hl+:12,info:8,prompt:8,pointer:4,marker:4,spinner:8,header:8,border:8,gutter:-1' \
-  --info=hidden --prompt='  ' \
-  --header="scope: $scope · ↵ open · ^l live · ^h history · ^s saved · ^r refresh · esc" \
+  --color='fg:-1,bg:-1,hl:4,fg+:-1:bold,bg+:-1,hl+:12,info:8,prompt:8,pointer:4,marker:4,spinner:8,header:8,border:8,gutter:-1' \
+  --info=hidden --prompt=' › ' \
+  --header="$(header_for "$scope")" \
   --header-first --padding='1,2' \
   --preview='"$TMUX_AGENT_SCRIPTS/preview.sh" {1} {2}' \
   --preview-window='right,55%,border-left' \
@@ -36,8 +52,8 @@ fzf \
   --bind='ctrl-e:execute("$TMUX_AGENT_SCRIPTS/rename.sh" {1})+reload("$TMUX_AGENT_SCRIPTS/finder-collect.sh" "$TMUX_AGENT_SNAPSHOT")' \
   --bind='ctrl-x:execute("$TMUX_AGENT_SCRIPTS/stop.sh" {1})+reload("$TMUX_AGENT_SCRIPTS/finder-collect.sh" "$TMUX_AGENT_SNAPSHOT")' \
   --bind='ctrl-p:change-preview("$TMUX_AGENT_SCRIPTS/capture.sh" {1})' \
-  --bind='ctrl-h:reload("$TMUX_AGENT_SCRIPTS/finder-collect.sh" "$TMUX_AGENT_SNAPSHOT" history)+change-header(scope: history · ↵ open · ^l live · ^h history · ^s saved · ^r refresh · esc)' \
-  --bind='ctrl-s:reload("$TMUX_AGENT_SCRIPTS/finder-collect.sh" "$TMUX_AGENT_SNAPSHOT" sessions)+change-header(scope: saved · ↵ open · ^l live · ^h history · ^s saved · ^r refresh · esc)' \
-  --bind='ctrl-l:reload("$TMUX_AGENT_SCRIPTS/finder-collect.sh" "$TMUX_AGENT_SNAPSHOT" live)+change-header(scope: live · ↵ open · ^l live · ^h history · ^s saved · ^r refresh · esc)' \
+  --bind="ctrl-h:reload(\"\$TMUX_AGENT_SCRIPTS/finder-collect.sh\" \"\$TMUX_AGENT_SNAPSHOT\" history)+change-header($(header_for history))" \
+  --bind="ctrl-s:reload(\"\$TMUX_AGENT_SCRIPTS/finder-collect.sh\" \"\$TMUX_AGENT_SNAPSHOT\" sessions)+change-header($(header_for saved))" \
+  --bind="ctrl-l:reload(\"\$TMUX_AGENT_SCRIPTS/finder-collect.sh\" \"\$TMUX_AGENT_SNAPSHOT\" live)+change-header($(header_for live))" \
   --bind='ctrl-r:reload("$TMUX_AGENT_SCRIPTS/finder-collect.sh" "$TMUX_AGENT_SNAPSHOT")' \
   <"$snapshot_dir/list" >/dev/null
