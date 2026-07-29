@@ -1,0 +1,66 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+plugin_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=../scripts/lib.sh
+source "$plugin_dir/scripts/lib.sh"
+
+usage() {
+  cat <<'EOF'
+Usage: tmux-agent COMMAND [OPTIONS]
+
+Commands:
+  new                  Create a managed agent window
+  run                  Run a managed harness process
+  event                Record a harness event
+  seen RUN_ID          Mark current events seen
+  reconcile            Archive dead panes and refresh status
+  status               Print compact tmux status summary
+  finder               Open the agent finder
+  sidebar              Toggle the persistent sidebar
+  setup [--apply]      Preview or install harness adapters
+  doctor               Check dependencies and adapters
+EOF
+}
+
+command=${1:-finder}
+[[ $# -gt 0 ]] && shift
+
+case $command in
+  register|event|run|new)
+    exec "$plugin_dir/scripts/$command.sh" "$@"
+    ;;
+  seen)
+    mark_seen "${1:?run ID required}"
+    ;;
+  reconcile)
+    reconcile_runs
+    ;;
+  status)
+    cache="$(runtime_root)/status"
+    if [[ -r $cache ]]; then
+      if read -r total working attention unseen failed <"$cache" && ((total > 0)); then
+        printf 'AI %s · %s working · %s attention · %s unseen · %s failed ' \
+          "$total" "$working" "$attention" "$unseen" "$failed"
+      fi
+    fi
+    ;;
+  finder)
+    exec "$plugin_dir/scripts/finder.sh"
+    ;;
+  sidebar)
+    exec "$plugin_dir/scripts/sidebar-toggle.sh" toggle "${TMUX_PANE:-}" "${TMUX_AGENT_CLIENT:-}"
+    ;;
+  setup|doctor)
+    exec "$plugin_dir/scripts/$command.sh" "$@"
+    ;;
+  -h|--help|help)
+    usage
+    ;;
+  *)
+    printf 'tmux-agent: unknown command: %s\n' "$command" >&2
+    usage >&2
+    exit 2
+    ;;
+esac

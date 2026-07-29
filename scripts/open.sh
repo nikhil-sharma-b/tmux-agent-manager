@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$script_dir/lib.sh"
+
+run=${1:?run ID required}
+kind=${2:?entry kind required}
+valid_id "$run" || exit 1
+if [[ $kind == live ]]; then
+  exec "$script_dir/jump.sh" "$run" "${3:?session ID required}" \
+    "${4:?window ID required}" "${5:?pane ID required}" "${6:?event offset required}"
+fi
+
+file="$(history_root)/$run.json"
+[[ -f $file ]] || exit 1
+thread=$(jq -r '.thread_id' "$file")
+harness=$(jq -r '.harness' "$file")
+label=$(jq -r '.label' "$file")
+cwd=$(jq -r '.cwd' "$file")
+native_id=$(jq -r '.native_ids[-1] // ""' "$file")
+[[ $native_id =~ ^[[:alnum:]_.:-]+$ ]] || native_id=''
+new_run=$(new_uuid)
+session=$(agent_session_name "$label" "$new_run")
+command="$(shell_quote "$plugin_dir/bin/tmux-agent") run --thread $(shell_quote "$thread") --run $(shell_quote "$new_run") --agent $(shell_quote "$harness") --label $(shell_quote "$label")"
+[[ -n $native_id ]] && command+=" --resume $(shell_quote "$native_id")"
+create_agent_session "$session" "$cwd" "$label" "$command"
