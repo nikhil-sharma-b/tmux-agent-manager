@@ -55,6 +55,14 @@ export TMUX_AGENT_RUN_ID=$run
 export TMUX_AGENT_HARNESS=claude
 export TMUX_AGENT_PANE_ID=$pane
 printf '{"session_id":"native-1"}\n' | "$root/scripts/adapters/claude.sh" UserPromptSubmit
+if command -v socat >/dev/null 2>&1; then
+  printf '{"session_id":"socket-native"}\n' | TMUX_AGENT_BIN=/bin/true \
+    socat - EXEC:"$root/scripts/adapters/claude.sh PreToolUse" \
+    || fail 'Claude adapter could not read socket-backed stdin'
+  printf '{"thread_id":"socket-native"}\n' | TMUX_AGENT_BIN=/bin/true \
+    socat - EXEC:"$root/scripts/adapters/codex.sh PreToolUse" \
+    || fail 'Codex adapter could not read socket-backed stdin'
+fi
 
 snapshot="$tmp/snapshot"
 mkdir -p "$snapshot"
