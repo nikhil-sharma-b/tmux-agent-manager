@@ -115,6 +115,28 @@ tmux kill-pane -t "$pane"
 "$root/bin/tmux-agent" reconcile
 [[ -f "$tmp/state/tmux-agent-manager/history/$second_run.json" ]] || fail 'dead pane not archived'
 
+# A harness started outside the plugin must leave the list when it exits,
+# even though its pane survives.
+tmux -L "$socket" split-window -d -t test -c "$tmp/work"
+direct_pane=$(tmux -L "$socket" list-panes -t test -F '#{pane_id}' | sort | tail -n 1)
+export TMUX_PANE=$direct_pane
+export TMUX_AGENT_PANE_ID=$direct_pane
+unset TMUX_AGENT_RUN_ID
+printf '{"session_id":"direct-1"}\n' | "$root/scripts/adapters/claude.sh" SessionStart
+list=$("$root/scripts/collect.sh" "$snapshot" live)
+assert_contains "$list" "$direct_pane"
+direct_run=$(tmux -L "$socket" display-message -p -t "$direct_pane" '#{@agent-manager-run}')
+[[ -n $direct_run ]] || fail 'unmanaged run not registered on pane'
+printf '{"session_id":"direct-1"}\n' | "$root/scripts/adapters/claude.sh" SessionEnd
+list=$("$root/scripts/collect.sh" "$snapshot" live)
+[[ $list != *"$direct_pane"* ]] || fail 'exited unmanaged run stayed in list'
+[[ -f "$tmp/state/tmux-agent-manager/history/$direct_run.json" ]] \
+  || fail 'exited unmanaged run not archived'
+# A repeated terminal event for a gone run must stay harmless.
+printf '{"session_id":"direct-1"}\n' | "$root/scripts/adapters/claude.sh" SessionEnd
+list=$("$root/scripts/collect.sh" "$snapshot" live)
+[[ $list != *"$direct_pane"* ]] || fail 'duplicate SessionEnd re-registered run'
+
 CLAUDE_SETTINGS_FILE="$tmp/home/.claude/settings.json" \
 CODEX_HOOKS_FILE="$tmp/home/.codex/hooks.json" \
 OPENCODE_PLUGIN_DIR="$tmp/home/.config/opencode/plugin" \
