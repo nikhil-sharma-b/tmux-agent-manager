@@ -13,7 +13,7 @@ pick() {
   fzf --height=100% --layout=reverse --border=none --no-scrollbar --info=hidden \
     --prompt=' › ' --pointer='▌' --padding='1,2' --ansi --header-first \
     --header="$(printf '\033[1m%s\033[0m  \033[90mstep %s of 3 · esc cancels\033[0m' "$step" "$2")" \
-    --color='fg:-1,bg:-1,hl:4,fg+:-1:bold,bg+:-1,hl+:12,info:8,prompt:8,pointer:4,header:8,gutter:-1'
+    --color='fg:-1,bg:-1,hl:4,fg+:4:bold,bg+:-1,hl+:12,info:8,prompt:8,pointer:4,header:8,gutter:8'
 }
 
 harness=$(printf 'claude\ncodex\nopencode\n' | pick agent 1) || exit 0

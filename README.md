@@ -50,7 +50,16 @@ The sidebar shows one line per agent: a state glyph, the label, and the state or
 
 Press `prefix + Ctrl-a` to open the detailed popup directly.
 
-The popup fuzzy-searches its current scope. Its header carries the same scope tabs plus its actions: `Ctrl-l` live, `Ctrl-h` history, `Ctrl-s` saved sessions, `Ctrl-n` new, `Ctrl-e` rename, `Ctrl-x` stop, `Ctrl-p` pane output, `Ctrl-r` refresh.
+Search fuzzy-matches the current scope. Scope tabs stay in the header; the actions are `Ctrl-l` live, `Ctrl-h` history, `Ctrl-s` saved sessions, `Ctrl-n` new, `Ctrl-e` rename, `Ctrl-x` stop, `Ctrl-o` details, `Ctrl-p` pane output, `Ctrl-r` refresh.
+
+Search matches the sidebar layout: scope tabs on top, keys along the bottom. It adapts to the terminal it opens in, so the same keys work in the popup and in the sidebar pane:
+
+- 96 columns or wider: details beside the list
+- narrower: list only, with `Ctrl-o` opening details below it
+
+Bottom keys need fzf 0.65 or newer. Older versions keep them on a second header line.
+
+Details are cut to the available width rather than wrapped, and repeated events collapse into one line.
 
 ## States
 
