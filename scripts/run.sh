@@ -40,15 +40,15 @@ export TMUX_AGENT_BIN="$plugin_dir/bin/tmux-agent"
 
 case $harness in
   claude)
-    command=(claude)
+    command=("${TMUX_AGENT_CLAUDE_COMMAND:-claude}")
     [[ -n $resume ]] && command+=(--resume "$resume")
     ;;
   codex)
-    command=(codex)
+    command=("${TMUX_AGENT_CODEX_COMMAND:-codex}")
     [[ -n $resume ]] && command+=(resume "$resume")
     ;;
   opencode)
-    command=(opencode)
+    command=("${TMUX_AGENT_OPENCODE_COMMAND:-opencode}")
     [[ -n $resume ]] && command+=(--session "$resume")
     ;;
 esac

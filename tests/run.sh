@@ -37,6 +37,8 @@ export XDG_STATE_HOME="$tmp/state"
 export HOME="$tmp/home"
 
 source "$root/scripts/lib.sh"
+[[ $(truncate_text 'short label' 20) == 'short label' ]] || fail 'short label was truncated'
+[[ $(truncate_text 'long agent session label' 12) == 'long agen...' ]] || fail 'long label ellipsis incorrect'
 dedicated_run=$(new_uuid)
 dedicated_session=$(agent_session_name 'Review API' "$dedicated_run")
 TMUX_AGENT_NO_SWITCH=1 create_agent_session "$dedicated_session" "$tmp/work" 'Review API' 'sleep 60'
@@ -103,6 +105,64 @@ jq -e '.hooks.SessionStart | length == 2' "$tmp/home/.claude/settings.json" >/de
   || fail 'setup was not idempotent'
 [[ -L "$tmp/home/.config/opencode/plugin/tmux-agent-manager.js" ]] \
   || fail 'OpenCode adapter symlink absent'
+
+native="$tmp/native"
+mkdir -p "$native/claude/projects/project" "$native/cache"
+printf '{"sessionId":"claude-native","project":"%s","timestamp":3000}\n' "$tmp/work" \
+  >"$native/claude/history.jsonl"
+printf '{"type":"ai-title","sessionId":"claude-native","aiTitle":"Claude saved"}\n' \
+  >"$native/claude/projects/project/claude-native.jsonl"
+sqlite3 "$native/codex.db" "
+  CREATE TABLE threads (
+    id TEXT, name TEXT, title TEXT, cwd TEXT, source TEXT,
+    recency_at_ms INTEGER, updated_at_ms INTEGER, updated_at INTEGER, archived INTEGER
+  );
+  INSERT INTO threads VALUES ('codex-native', 'Codex saved', '', '/tmp/codex', 'cli', 2000, 2000, 2, 0);
+"
+sqlite3 "$native/opencode.db" "
+  CREATE TABLE session (
+    id TEXT, title TEXT, directory TEXT, time_updated INTEGER,
+    parent_id TEXT, time_archived INTEGER
+  );
+  INSERT INTO session VALUES ('opencode-native', 'OpenCode saved', '/tmp/opencode', 1000, NULL, NULL);
+"
+CLAUDE_PROJECTS_DIR="$native/claude/projects" \
+CLAUDE_HISTORY_FILE="$native/claude/history.jsonl" \
+CODEX_DB="$native/codex.db" \
+OPENCODE_DB="$native/opencode.db" \
+XDG_CACHE_HOME="$native/cache" \
+  "$root/scripts/native-sessions.sh" refresh
+native_catalog=$(<"$native/cache/tmux-agent-manager/native-sessions.tsv")
+assert_contains "$native_catalog" 'Claude saved'
+assert_contains "$native_catalog" 'Codex saved'
+assert_contains "$native_catalog" 'OpenCode saved'
+
+mkdir -p "$native/bin"
+printf '%s\n' \
+  '#!/usr/bin/env bash' \
+  'printf "%s\n" "$*" >"$NATIVE_RESUME_LOG"' \
+  'sleep 60' >"$native/bin/claude"
+chmod +x "$native/bin/claude"
+tmux set-environment -g PATH "$native/bin:$PATH"
+tmux set-environment -g NATIVE_RESUME_LOG "$native/resume.log"
+tmux set-environment -g TMUX_AGENT_CLAUDE_COMMAND "$native/bin/claude"
+TMUX_AGENT_NO_SWITCH=1 "$root/scripts/open.sh" \
+  claude-native native:claude "$tmp/work" 3000 - 0 'Claude saved'
+for _ in {1..30}; do
+  [[ -f $native/resume.log ]] && break
+  sleep 0.1
+done
+if [[ ! -f $native/resume.log ]]; then
+  native_debug=$(tmux list-panes -a -F '#{session_name}:#{window_name}.#{pane_index} #{pane_dead} #{pane_current_command}')
+  resume_debug_session=$(tmux list-sessions -F '#{session_name}' | awk '/^ai-Claude-saved-/ { print; exit }')
+  resume_debug=$(tmux capture-pane -p -t "=$resume_debug_session:agent" 2>/dev/null || true)
+  fail "native Claude resume command did not start: $native_debug / $resume_debug"
+fi
+[[ $(<"$native/resume.log") == '--resume claude-native' ]] || fail 'native Claude resume arguments incorrect'
+resume_session=$(tmux list-sessions -F '#{session_name}' | awk '/^ai-Claude-saved-/ { print; exit }')
+[[ -n $resume_session ]] || fail 'native resume did not create dedicated session'
+tmux kill-session -t "=$resume_session"
+"$root/bin/tmux-agent" reconcile
 
 nav_a=$(tmux list-panes -t test -F '#{pane_id}' | sort | tail -n 1)
 nav_b=$(tmux split-window -d -P -F '#{pane_id}' -t "$nav_a" 'sleep 60')

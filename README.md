@@ -10,6 +10,7 @@ Every managed thread starts in its own `ai-<label>-<id>` tmux session. Worktree 
 - Bash
 - fzf
 - jq
+- sqlite3
 - flock
 - Git
 - [tmux-worktree](https://github.com/nikhil-sharma-b/tmux-worktree) for new-worktree creation
@@ -40,11 +41,14 @@ Sidebar controls:
 - `Enter`: jump to selected agent
 - `n`: create an agent
 - `h`: toggle live agents and history
+- `s`: toggle native Claude, Codex, and OpenCode sessions
 - `o`: open detailed popup
 - `r`: refresh
 - `q`: hide sidebar
 
 Press `prefix + Ctrl-a` to open the detailed popup directly. Its existing rename, stop, preview, and refresh controls remain available.
+
+In the popup, use `Ctrl-s` for native saved sessions, `Ctrl-h` for manager history, and `Ctrl-l` to return to live agents.
 
 ## States
 
@@ -71,6 +75,7 @@ set -g @agent-manager-border-style 'fg=brightblack'
 set -g @agent-manager-title ''
 set -g @agent-manager-stale-seconds '1800'
 set -g @agent-manager-history-limit '100'
+set -g @agent-manager-native-cache-seconds '60'
 set -g @agent-manager-worktree-command '~/repos/tmux-worktree/bin/tmux-worktree'
 ```
 
@@ -79,6 +84,15 @@ The manager is scoped to the current tmux server. It tracks managed launches imm
 One sidebar pane follows the most recently active tmux client. With multiple attached clients, it moves to whichever client changes panes or windows last.
 
 OpenCode loads the adapter from `~/.config/opencode/plugin/tmux-agent-manager.js`.
+
+List or refresh every resumable native harness session from the command line:
+
+```sh
+tmux-agent sessions
+tmux-agent sessions refresh
+```
+
+The catalog stores only session IDs, generated titles, directories, and timestamps. Prompt and transcript bodies are not cached.
 
 ## Test
 

@@ -6,6 +6,16 @@ source "$script_dir/lib.sh"
 
 run=${1:?run ID required}
 kind=${2:-live}
+if [[ $kind == native:* ]]; then
+  cache=${XDG_CACHE_HOME:-$HOME/.cache}/tmux-agent-manager/native-sessions.tsv
+  [[ -f $cache ]] || exit 0
+  awk -F '\t' -v id="$run" '$1 == id {
+    printf "\033[34;1m%s\033[0m\n\n  agent     %s\n  path      %s\n  state     saved session\n", $8, substr($2,8), $3
+    exit
+  }' "$cache"
+  exit 0
+fi
+
 valid_id "$run" || exit 1
 if [[ $kind == history ]]; then
   file="$(history_root)/$run.json"

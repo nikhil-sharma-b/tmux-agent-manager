@@ -21,7 +21,7 @@ check_optional() {
   fi
 }
 
-for command in tmux fzf bash jq flock git; do
+for command in tmux fzf bash jq flock git sqlite3; do
   check_command "$command"
 done
 for harness in claude codex opencode; do

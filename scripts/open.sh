@@ -6,6 +6,22 @@ source "$script_dir/lib.sh"
 
 run=${1:?run ID required}
 kind=${2:?entry kind required}
+if [[ $kind == native:* ]]; then
+  harness=${kind#native:}
+  native_id=$run
+  cwd=${3:?native cwd required}
+  label=${7:-${cwd##*/}}
+  [[ $harness == claude || $harness == codex || $harness == opencode ]] || exit 1
+  [[ $native_id =~ ^[[:alnum:]_.:-]+$ ]] || exit 1
+  [[ -d $cwd ]] || cwd=$HOME
+  thread=$(new_uuid)
+  new_run=$(new_uuid)
+  session=$(agent_session_name "$label" "$new_run")
+  command="$(shell_quote "$plugin_dir/bin/tmux-agent") run --thread $(shell_quote "$thread") --run $(shell_quote "$new_run") --agent $(shell_quote "$harness") --label $(shell_quote "$label") --resume $(shell_quote "$native_id")"
+  create_agent_session "$session" "$cwd" "$label" "$command"
+  exit 0
+fi
+
 valid_id "$run" || exit 1
 if [[ $kind == live ]]; then
   exec "$script_dir/jump.sh" "$run" "${3:?session ID required}" \

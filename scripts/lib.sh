@@ -32,6 +32,17 @@ clean_text() {
   printf '%s' "$1" | tr '\t\r\n' '   ' | tr -d '\000-\010\013\014\016-\037\177'
 }
 
+truncate_text() {
+  local text=$1 width=$2
+  if ((${#text} <= width)); then
+    printf '%s' "$text"
+  elif ((width > 3)); then
+    printf '%s...' "${text:0:width-3}"
+  else
+    printf '%s' "${text:0:width}"
+  fi
+}
+
 valid_id() {
   [[ $1 =~ ^[[:alnum:]_-]+$ ]]
 }

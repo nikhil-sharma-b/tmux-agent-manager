@@ -39,7 +39,11 @@ create_agent() {
 }
 
 refresh_rows() {
-  "$script_dir/collect.sh" "$snapshot_dir" "$mode" fast >/dev/null 2>&1 || true
+  if [[ $mode == sessions ]]; then
+    "$script_dir/native-sessions.sh" collect "$snapshot_dir" >/dev/null 2>&1 || true
+  else
+    "$script_dir/collect.sh" "$snapshot_dir" "$mode" fast >/dev/null 2>&1 || true
+  fi
   mapfile -t rows <"$snapshot_dir/list"
   count=${#rows[@]}
   if ((count == 0)); then
@@ -69,7 +73,7 @@ render_rows() {
   printf '\033[H\033[2J'
   printf '\033[34;1m AI agents\033[0m  \033[90m%s\033[0m\n' "$mode"
   printf '\033[90m j/k move · ↵ open · n new\033[0m\n'
-  printf '\033[90m h history · o popup · q hide\033[0m\n\n'
+  printf '\033[90m s saved · h history · o popup\033[0m\n\n'
   if ((count == 0)); then
     printf ' \033[90mNo %s agents\033[0m\n' "$mode"
   else
@@ -77,12 +81,21 @@ render_rows() {
     ((end > count)) && end=$count
     for ((index = offset; index < end; index++)); do
       IFS=$'\t' read -r run kind session window pane size priority label state title metadata <<<"${rows[$index]}"
+      label_width=$((pane_width > 6 ? pane_width - 6 : 18))
+      display_label=$(truncate_text "$label" "$label_width")
       if ((index == selected)); then
-        label_width=$((pane_width > 6 ? pane_width - 6 : 18))
         row_width=$((pane_width > 4 ? pane_width - 3 : 20))
-        printf '\033[7m %-*s \033[0m\n' "$row_width" "${label:0:$label_width}"
+        printf '\033[7m %-*s \033[0m\n' "$row_width" "$display_label"
       else
-        printf ' %s\n' "$title"
+        case $state in
+          attention|turn-failed) glyph='\033[33;1m!\033[0m' ;;
+          ready) glyph='\033[32;1m◆\033[0m' ;;
+          working) glyph='\033[34;1m●\033[0m' ;;
+          stale) glyph='\033[33m?\033[0m' ;;
+          crashed) glyph='\033[31;1m×\033[0m' ;;
+          *) glyph='\033[90m·\033[0m' ;;
+        esac
+        printf ' %b %s\n' "$glyph" "$display_label"
       fi
       printf '   \033[90m%s\033[0m\n\n' "$state"
     done
@@ -121,12 +134,18 @@ while true; do
         '')
           if ((count > 0)); then
             IFS=$'\t' read -r run kind session window pane size _ <<<"${rows[$selected]}"
-            "$script_dir/open.sh" "$run" "$kind" "$session" "$window" "$pane" "$size" || true
+            "$script_dir/open.sh" "$run" "$kind" "$session" "$window" "$pane" "$size" "$label" || true
           fi
           break
           ;;
         h)
           [[ $mode == live ]] && mode=history || mode=live
+          selected=0
+          selected_run=''
+          break
+          ;;
+        s)
+          [[ $mode == sessions ]] && mode=live || mode=sessions
           selected=0
           selected_run=''
           break
