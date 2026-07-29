@@ -14,6 +14,7 @@ selected=0
 selected_run=''
 last_signature=''
 force_redraw=1
+show_help=0
 interval=$(agent_option '@agent-manager-sidebar-interval' '1')
 [[ $interval =~ ^[1-9][0-9]*$ ]] || interval=1
 
@@ -46,6 +47,13 @@ create_agent() {
     -e "TMUX_AGENT_SOURCE_PANE=$target" "$script_dir/new.sh"
 }
 
+select_index() {
+  selected=$1
+  IFS=$'\t' read -r selected_run _ <<<"${rows[$selected]}"
+  tmux set-option -p -t "$TMUX_PANE" @agent-manager-sidebar-selected "$selected_run" 2>/dev/null || true
+  dirty=1
+}
+
 refresh_rows() {
   local geometry signature
   if [[ $mode == sessions ]]; then
@@ -70,7 +78,7 @@ refresh_rows() {
   fi
   tmux set-option -p -t "$TMUX_PANE" @agent-manager-sidebar-selected "$selected_run" 2>/dev/null || true
   geometry=$(tmux display-message -p -t "$TMUX_PANE" '#{pane_width}x#{pane_height}' 2>/dev/null || true)
-  signature=$(printf '%s\n' "$mode" "$geometry" "${rows[@]}")
+  signature=$(printf '%s\n' "$mode" "$geometry" "$show_help" "${rows[@]}")
   if ((force_redraw == 1)) || [[ $signature != "$last_signature" ]]; then
     dirty=1
     force_redraw=0
@@ -78,44 +86,116 @@ refresh_rows() {
   fi
 }
 
-render_rows() {
+read_geometry() {
   pane_height=$(tmux display-message -p -t "$TMUX_PANE" '#{pane_height}' 2>/dev/null || printf '24')
   pane_width=$(tmux display-message -p -t "$TMUX_PANE" '#{pane_width}' 2>/dev/null || printf '38')
-  max_rows=$(((pane_height - 6) / 3))
+  printf -v rule '%*s' "$pane_width" ''
+  rule=${rule// /─}
+}
+
+# Mode tabs double as the only always-visible label for h and s.
+render_tabs() {
+  local tab out=' '
+  for tab in live history saved; do
+    if [[ $tab == "$mode" || ($tab == saved && $mode == sessions) ]]; then
+      out+=$(printf '\033[1;4m%s\033[0m  ' "$tab")
+    else
+      out+=$(printf '\033[90m%s\033[0m  ' "$tab")
+    fi
+  done
+  printf '%s\n' "$out"
+}
+
+# Padding is computed from character counts because printf widths count bytes.
+help_row() {
+  local pad=$((5 - ${#1}))
+  ((pad < 1)) && pad=1
+  printf ' \033[1m%s\033[0m%*s\033[90m%s\033[0m\n' "$1" "$pad" '' "$2"
+}
+
+render_help() {
+  printf '\033[H\033[2J'
+  printf '\033[34;1m keys\033[0m\n'
+  printf '\033[90m%s\033[0m\n' "$rule"
+  help_row 'j k' 'move'
+  help_row '↵' 'open agent'
+  help_row 'n' 'new agent'
+  help_row '/' 'fuzzy find'
+  help_row 'h' 'history'
+  help_row 's' 'saved sessions'
+  help_row 'r' 'refresh'
+  help_row 'q' 'hide sidebar'
+  printf '\033[%d;1H\033[90m%s\033[0m\n \033[90many key closes\033[0m' \
+    "$((pane_height - 1))" "$rule"
+}
+
+render_rows() {
+  local index end offset max_rows label state kind meta glyph label_width remaining
+
+  read_geometry
+  if ((show_help == 1)); then
+    render_help
+    return
+  fi
+
+  max_rows=$((pane_height - 6))
   ((max_rows < 1)) && max_rows=1
   offset=0
   ((selected >= max_rows)) && offset=$((selected - max_rows + 1))
 
   printf '\033[H\033[2J'
-  printf '\033[34;1m AI agents\033[0m  \033[90m%s\033[0m\n' "$mode"
-  printf '\033[90m j/k move · ↵ open · n new\033[0m\n'
-  printf '\033[90m s saved · h history · / search\033[0m\n\n'
+  printf '\033[34;1m AI agents\033[0m'
+  ((count > 0)) && printf '\033[90m  %s\033[0m' "$count"
+  printf '\n'
+  render_tabs
+  printf '\033[90m%s\033[0m\n' "$rule"
+
   if ((count == 0)); then
-    printf ' \033[90mNo %s agents\033[0m\n' "$mode"
+    printf '\n \033[90mNo %s agents\033[0m\n' "$([[ $mode == sessions ]] && printf '%s' saved || printf '%s' "$mode")"
+    printf ' \033[90mpress n to start one\033[0m\n'
   else
     end=$((offset + max_rows))
     ((end > count)) && end=$count
     for ((index = offset; index < end; index++)); do
       IFS=$'\t' read -r run kind session window pane size priority label state title metadata <<<"${rows[$index]}"
-      label_width=$((pane_width > 6 ? pane_width - 6 : 18))
-      display_label=$(truncate_text "$label" "$label_width")
-      if ((index == selected)); then
-        row_width=$((pane_width > 4 ? pane_width - 3 : 20))
-        printf '\033[7m %-*s \033[0m\n' "$row_width" "$display_label"
+      if [[ $kind == native:* ]]; then
+        meta=${kind#native:}
       else
-        case $state in
-          attention|turn-failed) glyph='\033[33;1m!\033[0m' ;;
-          ready) glyph='\033[32;1m◆\033[0m' ;;
-          working) glyph='\033[34;1m●\033[0m' ;;
-          stale) glyph='\033[33m?\033[0m' ;;
-          crashed) glyph='\033[31;1m×\033[0m' ;;
-          *) glyph='\033[90m·\033[0m' ;;
-        esac
-        printf ' %b %s\n' "$glyph" "$display_label"
+        meta=$state
       fi
-      printf '   \033[90m%s\033[0m\n\n' "$state"
+      # Right column only earns its space on a reasonably wide sidebar.
+      if ((pane_width < 30)); then
+        meta=''
+        label_width=$((pane_width - 3))
+      else
+        meta=$(truncate_text "$meta" 9)
+        label_width=$((pane_width - 5 - ${#meta}))
+      fi
+      ((label_width < 4)) && label_width=4
+      label=$(truncate_text "$label" "$label_width")
+      remaining=$((label_width - ${#label}))
+      case $state in
+        attention|turn-failed) glyph='\033[33;1m!\033[0m' ;;
+        ready) glyph='\033[32;1m◆\033[0m' ;;
+        working) glyph='\033[34;1m●\033[0m' ;;
+        stale) glyph='\033[33m?\033[0m' ;;
+        crashed) glyph='\033[31;1m×\033[0m' ;;
+        *) glyph='\033[90m·\033[0m' ;;
+      esac
+      if ((index == selected)); then
+        printf '\033[34;1m▌\033[0m%b \033[1m%s\033[0m' "$glyph" "$label"
+      else
+        printf ' %b %s' "$glyph" "$label"
+      fi
+      ((remaining > 0)) && printf '%*s' "$remaining" ''
+      [[ -n $meta ]] && printf '  \033[90m%s\033[0m' "$meta"
+      printf '\n'
     done
+    ((end < count)) && printf ' \033[90m↓ %s more\033[0m\n' "$((count - end))"
   fi
+
+  printf '\033[%d;1H\033[90m%s\033[0m\n' "$((pane_height - 1))" "$rule"
+  printf '\033[90m%s\033[0m' " $(truncate_text '↵ open · n new · / find · ? keys' "$((pane_width - 2))")"
 }
 
 while true; do
@@ -130,26 +210,26 @@ while true; do
 
     key=''
     if IFS= read -rsn1 -t 0.05 key; then
+      if ((show_help == 1)); then
+        show_help=0
+        force_redraw=1
+        break
+      fi
+      # Arrow keys arrive as an escape sequence; map them onto j/k.
+      if [[ $key == $'\033' ]]; then
+        IFS= read -rsn2 -t 0.02 key || key=''
+        case $key in
+          '[A') key=k ;;
+          '[B') key=j ;;
+          *) key='' ;;
+        esac
+      fi
       case $key in
-        j)
-          if ((count > 0 && selected < count - 1)); then
-            selected=$((selected + 1))
-            IFS=$'\t' read -r selected_run _ <<<"${rows[$selected]}"
-            tmux set-option -p -t "$TMUX_PANE" @agent-manager-sidebar-selected "$selected_run" 2>/dev/null || true
-            dirty=1
-          fi
-          ;;
-        k)
-          if ((selected > 0)); then
-            selected=$((selected - 1))
-            IFS=$'\t' read -r selected_run _ <<<"${rows[$selected]}"
-            tmux set-option -p -t "$TMUX_PANE" @agent-manager-sidebar-selected "$selected_run" 2>/dev/null || true
-            dirty=1
-          fi
-          ;;
+        j) ((count > 0 && selected < count - 1)) && select_index $((selected + 1)) ;;
+        k) ((selected > 0)) && select_index $((selected - 1)) ;;
         '')
           if ((count > 0)); then
-            IFS=$'\t' read -r run kind session window pane size _ <<<"${rows[$selected]}"
+            IFS=$'\t' read -r run kind session window pane size priority label _ <<<"${rows[$selected]}"
             "$script_dir/open.sh" "$run" "$kind" "$session" "$window" "$pane" "$size" "$label" || true
           fi
           break
@@ -170,6 +250,7 @@ while true; do
           ;;
         n) create_agent; break ;;
         /|f|o) open_finder; break ;;
+        '?') show_help=1; force_redraw=1; break ;;
         q) "$script_dir/sidebar-toggle.sh" hide "$TMUX_PANE" "${TMUX_AGENT_CLIENT:-}"; exit 0 ;;
         r) force_redraw=1; break ;;
       esac

@@ -17,7 +17,8 @@ emit_row() {
   cwd=$(clean_text "$cwd")
   state="$harness · saved"
   printf '%s\tnative:%s\t%s\t%s\t-\t0\t8\t%s\t%s\t\033[90m·\033[0m %-26s\t\033[90m%s · %s\033[0m\n' \
-    "$id" "$harness" "$cwd" "$updated" "$title" "$state" "$title" "$harness" "${cwd##*/}"
+    "$id" "$harness" "$cwd" "$updated" "$title" "$state" "$(truncate_text "$title" 26)" \
+    "$harness" "${cwd##*/}"
 }
 
 refresh() {

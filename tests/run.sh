@@ -38,7 +38,7 @@ export HOME="$tmp/home"
 
 source "$root/scripts/lib.sh"
 [[ $(truncate_text 'short label' 20) == 'short label' ]] || fail 'short label was truncated'
-[[ $(truncate_text 'long agent session label' 12) == 'long agen...' ]] || fail 'long label ellipsis incorrect'
+[[ $(truncate_text 'long agent session label' 12) == 'long agent…' ]] || fail 'long label ellipsis incorrect'
 dedicated_run=$(new_uuid)
 dedicated_session=$(agent_session_name 'Review API' "$dedicated_run")
 TMUX_AGENT_NO_SWITCH=1 create_agent_session "$dedicated_session" "$tmp/work" 'Review API' 'sleep 60'
@@ -72,7 +72,7 @@ assert_contains "$list" 'working'
 
 printf '{"session_id":"native-1"}\n' | "$root/scripts/adapters/claude.sh" Stop
 list=$("$root/scripts/collect.sh" "$snapshot" live)
-assert_contains "$list" 'ready · unseen'
+assert_contains "$list" $'\tready\t'
 "$root/bin/tmux-agent" seen "$run"
 status=$("$root/bin/tmux-agent" status)
 [[ $status != *'1 unseen'* ]] || fail 'seen event remained unseen'
@@ -280,10 +280,10 @@ done
 tmux send-keys -t "$replacement" /
 for _ in {1..100}; do
   finder_screen=$(tmux capture-pane -p -t "$replacement" 2>/dev/null || true)
-  [[ $finder_screen == *'scope: save'* ]] && break
+  [[ $finder_screen == *'›'* ]] && break
   sleep 0.02
 done
-[[ $finder_screen == *'scope: save'* ]] || fail 'sidebar fuzzy search did not open in place'
+[[ $finder_screen == *'›'* ]] || fail 'sidebar fuzzy search did not open in place'
 tmux send-keys -t "$replacement" Escape
 for _ in {1..50}; do
   sidebar_screen=$(tmux capture-pane -p -t "$replacement" 2>/dev/null || true)
