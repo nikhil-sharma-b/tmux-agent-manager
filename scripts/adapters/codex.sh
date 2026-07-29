@@ -3,7 +3,8 @@
 set -euo pipefail
 
 event=${1:-}
-payload=$(</dev/stdin)
+# Hook runners may provide fd 0 as a socket, which cannot be reopened through /dev/stdin.
+payload=$(cat)
 [[ -n $payload ]] || exit 0
 jq -e . >/dev/null <<<"$payload" || exit 0
 bin=${TMUX_AGENT_BIN:-"$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/bin/tmux-agent"}
