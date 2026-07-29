@@ -18,7 +18,7 @@ border_style=${border_style:-fg=brightblack}
 title=${title:-}
 
 tmux bind-key "$key" run-shell \
-  "$plugin_dir/scripts/sidebar-toggle.sh focus '#{pane_id}' '#{client_name}'"
+  "$plugin_dir/scripts/sidebar-toggle.sh toggle '#{pane_id}' '#{client_name}'"
 tmux bind-key "$finder_key" display-popup -E -w "$width" -h "$height" \
   -b rounded -s "$border_style" -T "$title" -d / \
   -e "TMUX_AGENT_BIN=$plugin_dir/bin/tmux-agent" \

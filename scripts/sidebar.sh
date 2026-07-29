@@ -5,11 +5,20 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$script_dir/lib.sh"
 
 snapshot_dir=$(mktemp -d "${TMPDIR:-/tmp}/tmux-agent-sidebar.XXXXXX")
-mode=live
+mode=$(tmux show-option -gqv @agent-manager-sidebar-mode)
+case $mode in
+  live|history|sessions) ;;
+  *) mode=live ;;
+esac
 selected=0
 selected_run=''
 interval=$(agent_option '@agent-manager-sidebar-interval' '1')
 [[ $interval =~ ^[1-9][0-9]*$ ]] || interval=1
+
+persist_mode() {
+  tmux set-option -g @agent-manager-sidebar-mode "$mode"
+  tmux set-option -p -t "$TMUX_PANE" @agent-manager-sidebar-mode "$mode" 2>/dev/null || true
+}
 
 cleanup() {
   printf '\033[?25h\033[?1049l'
@@ -17,6 +26,7 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 printf '\033[?1049h\033[?25l'
+persist_mode
 
 open_finder() {
   local width height border title
@@ -140,12 +150,14 @@ while true; do
           ;;
         h)
           [[ $mode == live ]] && mode=history || mode=live
+          persist_mode
           selected=0
           selected_run=''
           break
           ;;
         s)
           [[ $mode == sessions ]] && mode=live || mode=sessions
+          persist_mode
           selected=0
           selected_run=''
           break

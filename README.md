@@ -31,7 +31,7 @@ Reload tmux, then install harness adapters:
 ~/repos/tmux-agent-manager/bin/tmux-agent doctor
 ```
 
-The persistent sidebar opens automatically. Press `prefix + A` to focus it.
+The persistent sidebar opens automatically. Press `prefix + A` to hide or reopen it in the current window.
 
 ## Controls
 

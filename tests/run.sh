@@ -222,8 +222,8 @@ target_window=$(tmux display-message -p -t "$target" '#{window_id}')
 [[ $sidebar_window == "$target_window" ]] || fail 'sidebar did not follow target window'
 
 binding=$(tmux list-keys -T prefix A)
-assert_contains "$binding" 'sidebar-toggle.sh focus'
-"$root/scripts/sidebar-toggle.sh" hide "$target" ''
+assert_contains "$binding" 'sidebar-toggle.sh toggle'
+"$root/scripts/sidebar-toggle.sh" toggle "$target" ''
 [[ $(tmux show-option -gqv @agent-manager-sidebar-hidden) == 1 ]] || fail 'sidebar hide state absent'
 [[ -z $(tmux show-option -gqv @agent-manager-sidebar-pane) ]] || fail 'sidebar pane option remained after hide'
 
@@ -233,6 +233,28 @@ tmux set-option -g @agent-manager-sidebar-pane '%99999'
 replacement=$(tmux show-option -gqv @agent-manager-sidebar-pane)
 [[ $replacement =~ ^%[0-9]+$ && $replacement != %99999 ]] || fail 'stale sidebar was not recreated'
 tmux display-message -p -t "$replacement" '#{pane_id}' >/dev/null || fail 'replacement sidebar absent'
+"$root/scripts/sidebar-toggle.sh" toggle "$target" ''
+[[ $(tmux show-option -gqv @agent-manager-sidebar-hidden) == 1 ]] || fail 'sidebar toggle did not hide'
+"$root/scripts/sidebar-toggle.sh" toggle "$target" ''
+replacement=$(tmux show-option -gqv @agent-manager-sidebar-pane)
+[[ $replacement =~ ^%[0-9]+$ ]] || fail 'sidebar toggle did not reopen'
+tmux display-message -p -t "$replacement" '#{pane_id}' >/dev/null || fail 'reopened sidebar absent'
+tmux send-keys -t "$replacement" s
+for _ in {1..50}; do
+  mode=$(tmux show-option -gqv @agent-manager-sidebar-mode)
+  [[ $mode == sessions ]] && break
+  sleep 0.01
+done
+[[ $mode == sessions ]] || fail 'sidebar did not persist sessions mode'
+"$root/scripts/sidebar-toggle.sh" toggle "$target" ''
+"$root/scripts/sidebar-toggle.sh" toggle "$target" ''
+replacement=$(tmux show-option -gqv @agent-manager-sidebar-pane)
+for _ in {1..50}; do
+  mode=$(tmux show-option -pqv -t "$replacement" @agent-manager-sidebar-mode)
+  [[ $mode == sessions ]] && break
+  sleep 0.01
+done
+[[ $mode == sessions ]] || fail 'sidebar did not restore sessions mode'
 "$root/scripts/sidebar-toggle.sh" hide "$target" ''
 
 for file in "$root/bin/tmux-agent" "$root"/scripts/*.sh "$root"/scripts/adapters/*.sh \
