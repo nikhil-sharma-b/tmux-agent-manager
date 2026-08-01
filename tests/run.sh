@@ -50,18 +50,18 @@ mkdir -p "$tmp/commands" "$tmp/no-aliases"
 printf '%s\n' '#!/usr/bin/env bash' 'exit 0' >"$tmp/commands/fish"
 printf '%s\n' '#!/usr/bin/env bash' 'exit 1' >"$tmp/no-aliases/fish"
 chmod +x "$tmp/commands/fish" "$tmp/no-aliases/fish"
-[[ $(SHELL="$tmp/commands/fish" resume_agent_alias claude) == cc ]] \
-  || fail 'Claude resume alias not preferred'
-[[ $(SHELL="$tmp/commands/fish" resume_agent_alias opencode) == oc ]] \
+[[ $(SHELL="$tmp/commands/fish" agent_alias claude) == cc ]] \
+  || fail 'Claude alias not preferred'
+[[ $(SHELL="$tmp/commands/fish" agent_alias opencode) == oc ]] \
   || fail 'OpenCode resume alias not preferred'
-[[ -z $(SHELL="$tmp/no-aliases/fish" resume_agent_alias claude || true) ]] \
+[[ -z $(SHELL="$tmp/no-aliases/fish" agent_alias claude || true) ]] \
   || fail 'Claude missing alias not ignored'
-[[ -z $(SHELL="$tmp/no-aliases/fish" resume_agent_alias opencode || true) ]] \
+[[ -z $(SHELL="$tmp/no-aliases/fish" agent_alias opencode || true) ]] \
   || fail 'OpenCode missing alias not ignored'
 [[ -z $(SHELL="$tmp/commands/fish" TMUX_AGENT_CLAUDE_COMMAND=/custom/claude \
-  resume_agent_alias claude || true) ]] || fail 'Claude configured command not preserved'
+  agent_alias claude || true) ]] || fail 'Claude configured command not preserved'
 [[ -z $(SHELL="$tmp/commands/fish" TMUX_AGENT_OPENCODE_COMMAND=/custom/opencode \
-  resume_agent_alias opencode || true) ]] || fail 'OpenCode configured command not preserved'
+  agent_alias opencode || true) ]] || fail 'OpenCode configured command not preserved'
 dedicated_run=$(new_uuid)
 dedicated_session=$(agent_session_name 'Review API' "$dedicated_run")
 TMUX_AGENT_NO_SWITCH=1 create_agent_session "$dedicated_session" "$tmp/work" 'Review API' 'sleep 60'
@@ -195,8 +195,12 @@ printf '%s\n' \
   '#!/usr/bin/env bash' \
   'if [[ $2 == test* ]]; then exit 0; fi' \
   'printf "%s\n" "$2" >"$NATIVE_RESUME_LOG"' \
-  'sleep 60' >"$native/bin/fish"
+  '[[ $2 == *--resume* || $2 == *--session* ]] && sleep 60' >"$native/bin/fish"
 chmod +x "$native/bin/fish"
+TMUX_AGENT_SHELL="$native/bin/fish" NATIVE_RESUME_LOG="$native/new.log" \
+  "$root/scripts/run.sh" --thread "$(new_uuid)" --run "$(new_uuid)" \
+  --agent claude --label new
+assert_contains "$(<"$native/new.log")" 'cc'
 tmux set-environment -g PATH "$native/bin:$PATH"
 tmux set-environment -g TMUX_AGENT_SHELL "$native/bin/fish"
 tmux set-environment -g NATIVE_RESUME_LOG "$native/resume.log"

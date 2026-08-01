@@ -110,6 +110,12 @@ set -g @agent-manager-merge-kill-session 'on'
 set -g @agent-manager-worktree-command '~/repos/tmux-worktree/bin/tmux-worktree'
 ```
 
+Claude launches use the `cc` alias or function from your interactive shell when it exists, then fall back to `claude`. Override it for the tmux server when needed:
+
+```tmux
+set-environment -g TMUX_AGENT_CLAUDE_COMMAND claude
+```
+
 The manager is scoped to the current tmux server. It tracks managed launches immediately. Directly launched harnesses appear as degraded entries after their first adapter event.
 
 One sidebar pane follows the most recently active tmux client. With multiple attached clients, it moves to whichever client changes panes or windows last.
