@@ -380,10 +380,22 @@ branch_pr_merged() {
   [[ $state == MERGED ]]
 }
 
+# Only sessions this plugin created for a managed run are killed. A degraded run
+# shares whatever session the user launched the harness in, and that session is
+# never the plugin's to close.
+kill_run_session() {
+  local session=$1 managed=$2 name
+  [[ $(agent_option '@agent-manager-merge-kill-session' 'on') == on ]] || return 0
+  [[ $managed == true && -n $session ]] || return 0
+  name=$(tmux display-message -p -t "$session" '#{session_name}' 2>/dev/null || true)
+  [[ $name == ai-* ]] || return 0
+  tmux kill-session -t "$session" 2>/dev/null || true
+}
+
 # Merged work is finished work: the run leaves the live list and keeps its
-# metadata in history. The pane and its harness are left running.
+# metadata in history. A dedicated session for the run is closed with it.
 check_merged_runs() {
-  local dir run pane repo branch root
+  local dir run pane repo branch root dir_session managed
   ensure_state_dirs
   root=$(runtime_root)
   { exec 7>"$root/.merge.lock"; } 2>/dev/null || return 0
@@ -391,12 +403,14 @@ check_merged_runs() {
   for dir in "$root"/runs/*; do
     [[ -f $dir/meta.json ]] || continue
     run=${dir##*/}
-    IFS=$'\t' read -r pane repo branch < <(jq -r '[.pane_id,.repo,.branch]|@tsv' "$dir/meta.json")
+    IFS=$'\t' read -r pane repo branch dir_session managed \
+      < <(jq -r '[.pane_id,.repo,.branch,.session_id,(.managed|tostring)]|@tsv' "$dir/meta.json")
     [[ -n $repo && -n $branch ]] || continue
     branch_pr_merged "$repo" "$branch" || continue
     append_event "$run" merged pr-merged '' "pull request for $branch merged" || true
     clear_pane_run "$pane" "$run"
     archive_run "$run"
+    kill_run_session "$dir_session" "$managed"
   done
   flock -u 7
   exec 7>&-

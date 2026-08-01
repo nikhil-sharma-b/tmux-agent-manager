@@ -77,9 +77,15 @@ Details are cut to the available width rather than wrapped, and repeated events 
 
 A run started on a git branch is retired once its pull request merges. The check
 needs the GitHub CLI (`gh`) and runs at most once per
-`@agent-manager-merge-poll-seconds`. The pane and its harness keep running; only
-the tracked run moves to history. Without `gh` the check is skipped, and setting
-the interval to `0` disables it. Run it on demand with `tmux-agent check-merges`.
+`@agent-manager-merge-poll-seconds`. Without `gh` the check is skipped, and
+setting the interval to `0` disables it. Run it on demand with
+`tmux-agent check-merges`.
+
+The run moves to history and its `ai-<label>-<id>` session is killed, which ends
+the harness process in it. Set `@agent-manager-merge-kill-session` to `off` to
+archive the run but leave the session running. A harness launched outside the
+plugin keeps whichever session it was started in; only sessions the plugin
+created for a managed run are closed.
 
 Only metadata and lifecycle events are stored. Prompts, transcripts, and captured pane output are never persisted.
 
@@ -99,6 +105,7 @@ set -g @agent-manager-stale-seconds '1800'
 set -g @agent-manager-history-limit '100'
 set -g @agent-manager-native-cache-seconds '60'
 set -g @agent-manager-merge-poll-seconds '120'
+set -g @agent-manager-merge-kill-session 'on'
 set -g @agent-manager-worktree-command '~/repos/tmux-worktree/bin/tmux-worktree'
 ```
 

@@ -261,8 +261,34 @@ list=$("$root/scripts/collect.sh" "$snapshot" live)
 [[ -z $(tmux display-message -p -t "$merge_pane" '#{@agent-manager-run}') ]] \
   || fail 'merged run left its pane registered'
 tmux display-message -p -t "$merge_pane" '#{pane_id}' >/dev/null \
-  || fail 'merged run killed its pane'
+  || fail 'merged run killed a session it did not own'
 tmux kill-pane -t "$merge_pane"
+
+# A managed run owns its ai-* session, so the merge closes the whole session.
+merge_run_id=$(new_uuid)
+merge_session=$(agent_session_name 'merged thread' "$merge_run_id")
+TMUX_AGENT_NO_SWITCH=1 create_agent_session "$merge_session" "$merge_repo" 'merged thread' 'sleep 60'
+merge_session_pane=$(tmux list-panes -t "=$merge_session" -F '#{pane_id}')
+register_run "$(new_uuid)" "$merge_run_id" claude 'merged thread' true "$merge_session_pane"
+PATH="$native/bin:$PATH" "$root/bin/tmux-agent" check-merges
+[[ -f "$tmp/state/tmux-agent-manager/history/$merge_run_id.json" ]] \
+  || fail 'managed merged run not archived'
+if tmux has-session -t "=$merge_session" 2>/dev/null; then
+  fail 'merged run left its session alive'
+fi
+
+# Killing sessions must stay switchable.
+merge_kept_id=$(new_uuid)
+merge_kept_session=$(agent_session_name 'kept thread' "$merge_kept_id")
+TMUX_AGENT_NO_SWITCH=1 create_agent_session "$merge_kept_session" "$merge_repo" 'kept thread' 'sleep 60'
+merge_kept_pane=$(tmux list-panes -t "=$merge_kept_session" -F '#{pane_id}')
+register_run "$(new_uuid)" "$merge_kept_id" claude 'kept thread' true "$merge_kept_pane"
+tmux set-option -g @agent-manager-merge-kill-session off
+PATH="$native/bin:$PATH" "$root/bin/tmux-agent" check-merges
+tmux set-option -gu @agent-manager-merge-kill-session
+tmux has-session -t "=$merge_kept_session" 2>/dev/null \
+  || fail 'merge kill option was not honoured'
+tmux kill-session -t "=$merge_kept_session"
 
 nav_a=$(tmux list-panes -t test -F '#{pane_id}' | sort | tail -n 1)
 nav_b=$(tmux split-window -d -P -F '#{pane_id}' -t "$nav_a" 'sleep 60')
