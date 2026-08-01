@@ -297,6 +297,8 @@ for _ in {1..50}; do
 done
 [[ $selected_run == "$nav_a_run" ]] || fail 'sidebar k navigation failed'
 tmux display-message -p -t "$sidebar" '#{pane_id}' >/dev/null || fail 'sidebar exited during navigation'
+assert_contains "$(<"$root/scripts/sidebar.sh")" 'r) rename_selected; break ;;'
+assert_contains "$(<"$root/scripts/sidebar.sh")" 'R) force_redraw=1; break ;;'
 
 target=$(tmux new-window -d -P -F '#{pane_id}' -t test -n other 'sleep 60')
 "$root/scripts/sidebar-follow.sh" "$target" ''
@@ -304,7 +306,7 @@ sidebar_window=$(tmux display-message -p -t "$sidebar" '#{window_id}')
 target_window=$(tmux display-message -p -t "$target" '#{window_id}')
 [[ $sidebar_window == "$target_window" ]] || fail 'sidebar did not follow target window'
 
-binding=$(tmux list-keys -T prefix A)
+binding=$(tmux list-keys -T prefix | awk '$4 == "A"')
 assert_contains "$binding" 'sidebar-toggle.sh toggle'
 "$root/scripts/sidebar-toggle.sh" toggle "$target" ''
 [[ $(tmux show-option -gqv @agent-manager-sidebar-hidden) == 1 ]] || fail 'sidebar hide state absent'

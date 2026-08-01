@@ -46,7 +46,8 @@ Sidebar controls. Press `?` in the sidebar for this list in the pane:
 - `h`: toggle live agents and history
 - `s`: toggle native Claude, Codex, and OpenCode sessions
 - `/`, `f`, or `o`: fuzzy search the current live, history, or saved view in the sidebar pane
-- `r`: refresh
+- `r`: rename the selected managed session
+- `R`: refresh
 - `q`: hide sidebar
 
 The sidebar shows one line per agent: a state glyph, the label, and the state or harness on the right. The tab row marks the current scope, and the footer keeps the four main keys visible.

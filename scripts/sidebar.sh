@@ -47,6 +47,16 @@ create_agent() {
     -e "TMUX_AGENT_SOURCE_PANE=$target" "$script_dir/new.sh"
 }
 
+rename_selected() {
+  ((count > 0)) || return
+  IFS=$'\t' read -r run kind _ <<<"${rows[$selected]}"
+  [[ $kind != native:* ]] || return
+  printf '\033[?25h'
+  "$script_dir/rename.sh" "$run" || true
+  printf '\033[?25l'
+  force_redraw=1
+}
+
 select_index() {
   selected=$1
   IFS=$'\t' read -r selected_run _ <<<"${rows[$selected]}"
@@ -123,7 +133,8 @@ render_help() {
   help_row '/' 'fuzzy find'
   help_row 'h' 'history'
   help_row 's' 'saved sessions'
-  help_row 'r' 'refresh'
+  help_row 'r' 'rename agent'
+  help_row 'R' 'refresh'
   help_row 'q' 'hide sidebar'
   printf '\033[%d;1H\033[90m%s\033[0m\n \033[90many key closes\033[0m' \
     "$((pane_height - 1))" "$rule"
@@ -252,7 +263,8 @@ while true; do
         /|f|o) open_finder; break ;;
         '?') show_help=1; force_redraw=1; break ;;
         q) "$script_dir/sidebar-toggle.sh" hide "$TMUX_PANE" "${TMUX_AGENT_CLIENT:-}"; exit 0 ;;
-        r) force_redraw=1; break ;;
+        r) rename_selected; break ;;
+        R) force_redraw=1; break ;;
       esac
     fi
   done
