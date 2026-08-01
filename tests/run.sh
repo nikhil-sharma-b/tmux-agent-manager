@@ -360,6 +360,9 @@ done
 tmux display-message -p -t "$sidebar" '#{pane_id}' >/dev/null || fail 'sidebar exited during navigation'
 assert_contains "$(<"$root/scripts/sidebar.sh")" 'r) rename_selected; break ;;'
 assert_contains "$(<"$root/scripts/sidebar.sh")" 'R) force_redraw=1; break ;;'
+sidebar_source=$(<"$root/scripts/sidebar.sh")
+[[ $sidebar_source != *'\033[2J'* ]] || fail 'sidebar redraw clears pane before rendering'
+assert_contains "$sidebar_source" "frame=\$(render_frame)"
 
 target=$(tmux new-window -d -P -F '#{pane_id}' -t test -n other 'sleep 60')
 "$root/scripts/sidebar-follow.sh" "$target" ''
