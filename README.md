@@ -14,6 +14,7 @@ Every managed thread starts in its own `ai-<label>-<id>` tmux session. Worktree 
 - flock
 - Git
 - [tmux-worktree](https://github.com/nikhil-sharma-b/tmux-worktree) for new-worktree creation, with `--no-editor` support
+- [Yazi](https://yazi-rs.github.io/) for optional directory browsing
 
 ## Install
 
@@ -32,6 +33,8 @@ Reload tmux, then install harness adapters:
 ```
 
 The persistent sidebar opens automatically. Press `prefix + A` to hide or reopen it in the current window.
+
+When creating an agent, its workspace can be the current directory, a typed directory path, a directory browsed with Yazi, or a new worktree. Typed relative paths start from the current pane's directory; absolute paths and `~/...` are also supported. In Yazi, navigate to the wanted directory and quit to use it.
 
 ## Controls
 
