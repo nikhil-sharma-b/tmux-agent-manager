@@ -35,7 +35,9 @@ if [[ $workspace == 'new worktree' ]]; then
     sleep 2
     exit 1
   }
-  exec "$worktree_bin" create --session-name "$session" --right-command "$command"
+  # Managed threads want the agent alone in the window, not the editor split
+  # tmux-worktree lays out for hand-driven work.
+  exec "$worktree_bin" create --session-name "$session" --no-editor --right-command "$command"
 fi
 
 source_pane=${TMUX_AGENT_SOURCE_PANE:-${TMUX_PANE:-}}

@@ -13,7 +13,7 @@ Every managed thread starts in its own `ai-<label>-<id>` tmux session. Worktree 
 - sqlite3
 - flock
 - Git
-- [tmux-worktree](https://github.com/nikhil-sharma-b/tmux-worktree) for new-worktree creation
+- [tmux-worktree](https://github.com/nikhil-sharma-b/tmux-worktree) for new-worktree creation, with `--no-editor` support
 
 ## Install
 
