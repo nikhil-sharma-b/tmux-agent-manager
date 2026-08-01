@@ -113,20 +113,19 @@ render_tabs() {
       out+=$(printf '\033[90m%s\033[0m  ' "$tab")
     fi
   done
-  printf '%s\n' "$out"
+  printf '%s\033[K\n' "$out"
 }
 
 # Padding is computed from character counts because printf widths count bytes.
 help_row() {
   local pad=$((5 - ${#1}))
   ((pad < 1)) && pad=1
-  printf ' \033[1m%s\033[0m%*s\033[90m%s\033[0m\n' "$1" "$pad" '' "$2"
+  printf ' \033[1m%s\033[0m%*s\033[90m%s\033[0m\033[K\n' "$1" "$pad" '' "$2"
 }
 
 render_help() {
-  printf '\033[H\033[2J'
-  printf '\033[34;1m keys\033[0m\n'
-  printf '\033[90m%s\033[0m\n' "$rule"
+  printf '\033[34;1m keys\033[0m\033[K\n'
+  printf '\033[90m%s\033[0m\033[K\n' "$rule"
   help_row 'j k' 'move'
   help_row '↵' 'open agent'
   help_row 'n' 'new agent'
@@ -136,14 +135,13 @@ render_help() {
   help_row 'r' 'rename agent'
   help_row 'R' 'refresh'
   help_row 'q' 'hide sidebar'
-  printf '\033[%d;1H\033[90m%s\033[0m\n \033[90many key closes\033[0m' \
+  printf '\033[J\033[%d;1H\033[90m%s\033[0m\033[K\n \033[90many key closes\033[0m\033[K' \
     "$((pane_height - 1))" "$rule"
 }
 
-render_rows() {
+render_frame() {
   local index end offset max_rows label state kind meta glyph label_width remaining
 
-  read_geometry
   if ((show_help == 1)); then
     render_help
     return
@@ -154,16 +152,15 @@ render_rows() {
   offset=0
   ((selected >= max_rows)) && offset=$((selected - max_rows + 1))
 
-  printf '\033[H\033[2J'
   printf '\033[34;1m AI agents\033[0m'
   ((count > 0)) && printf '\033[90m  %s\033[0m' "$count"
-  printf '\n'
+  printf '\033[K\n'
   render_tabs
-  printf '\033[90m%s\033[0m\n' "$rule"
+  printf '\033[90m%s\033[0m\033[K\n' "$rule"
 
   if ((count == 0)); then
-    printf '\n \033[90mNo %s agents\033[0m\n' "$([[ $mode == sessions ]] && printf '%s' saved || printf '%s' "$mode")"
-    printf ' \033[90mpress n to start one\033[0m\n'
+    printf '\033[K\n \033[90mNo %s agents\033[0m\033[K\n' "$([[ $mode == sessions ]] && printf '%s' saved || printf '%s' "$mode")"
+    printf ' \033[90mpress n to start one\033[0m\033[K\n'
   else
     end=$((offset + max_rows))
     ((end > count)) && end=$count
@@ -200,13 +197,22 @@ render_rows() {
       fi
       ((remaining > 0)) && printf '%*s' "$remaining" ''
       [[ -n $meta ]] && printf '  \033[90m%s\033[0m' "$meta"
-      printf '\n'
+      printf '\033[K\n'
     done
-    ((end < count)) && printf ' \033[90m↓ %s more\033[0m\n' "$((count - end))"
+    ((end < count)) && printf ' \033[90m↓ %s more\033[0m\033[K\n' "$((count - end))"
   fi
 
-  printf '\033[%d;1H\033[90m%s\033[0m\n' "$((pane_height - 1))" "$rule"
-  printf '\033[90m%s\033[0m' " $(truncate_text '↵ open · n new · / find · ? keys' "$((pane_width - 2))")"
+  printf '\033[J\033[%d;1H\033[90m%s\033[0m\033[K\n' "$((pane_height - 1))" "$rule"
+  printf '\033[90m%s\033[0m\033[K' " $(truncate_text '↵ open · n new · / find · ? keys' "$((pane_width - 2))")"
+}
+
+render_rows() {
+  local frame
+
+  read_geometry
+  frame=$(render_frame)
+  # Emit one overwrite-first frame so tmux never displays a cleared pane.
+  printf '\033[H%s' "$frame"
 }
 
 while true; do
