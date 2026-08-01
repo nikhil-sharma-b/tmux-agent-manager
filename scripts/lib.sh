@@ -363,10 +363,84 @@ prune_history() {
   done < <(jq -r '[.ended_at,input_filename]|@tsv' "$root"/*.json 2>/dev/null | sort -rn)
 }
 
+clear_pane_run() {
+  local pane=$1 run=$2
+  [[ $(tmux display-message -p -t "$pane" '#{@agent-manager-run}' 2>/dev/null || true) == "$run" ]] || return 0
+  tmux set-option -pu -t "$pane" @agent-manager-run 2>/dev/null || true
+  tmux set-option -pu -t "$pane" @agent-manager-thread 2>/dev/null || true
+  tmux set-option -pu -t "$pane" @agent-manager-harness 2>/dev/null || true
+  tmux set-option -pu -t "$pane" @agent-manager-state 2>/dev/null || true
+}
+
+branch_pr_merged() {
+  local repo=$1 branch=$2 state
+  [[ -n $repo && -n $branch && -d $repo ]] || return 1
+  command -v gh >/dev/null 2>&1 || return 1
+  state=$(cd "$repo" && gh pr view "$branch" --json state --jq '.state' 2>/dev/null) || return 1
+  [[ $state == MERGED ]]
+}
+
+# Only sessions this plugin created for a managed run are killed. A degraded run
+# shares whatever session the user launched the harness in, and that session is
+# never the plugin's to close.
+kill_run_session() {
+  local session=$1 managed=$2 name
+  [[ $(agent_option '@agent-manager-merge-kill-session' 'on') == on ]] || return 0
+  [[ $managed == true && -n $session ]] || return 0
+  name=$(tmux display-message -p -t "$session" '#{session_name}' 2>/dev/null || true)
+  [[ $name == ai-* ]] || return 0
+  tmux kill-session -t "$session" 2>/dev/null || true
+}
+
+# Merged work is finished work: the run leaves the live list and keeps its
+# metadata in history. A dedicated session for the run is closed with it.
+check_merged_runs() {
+  local dir run pane repo branch root dir_session managed
+  ensure_state_dirs
+  root=$(runtime_root)
+  { exec 7>"$root/.merge.lock"; } 2>/dev/null || return 0
+  flock -n 7 || { exec 7>&-; return 0; }
+  for dir in "$root"/runs/*; do
+    [[ -f $dir/meta.json ]] || continue
+    run=${dir##*/}
+    IFS=$'\t' read -r pane repo branch dir_session managed \
+      < <(jq -r '[.pane_id,.repo,.branch,.session_id,(.managed|tostring)]|@tsv' "$dir/meta.json")
+    [[ -n $repo && -n $branch ]] || continue
+    branch_pr_merged "$repo" "$branch" || continue
+    append_event "$run" merged pr-merged '' "pull request for $branch merged" || true
+    clear_pane_run "$pane" "$run"
+    archive_run "$run"
+    kill_run_session "$dir_session" "$managed"
+  done
+  flock -u 7
+  exec 7>&-
+  rebuild_cache
+}
+
+# Polling GitHub is slow, so the check runs detached and no more often than
+# the configured interval.
+merge_watch() {
+  local ttl root stamp now modified
+  ttl=$(agent_option '@agent-manager-merge-poll-seconds' '120')
+  [[ $ttl =~ ^[0-9]+$ ]] || ttl=120
+  ((ttl > 0)) || return 0
+  command -v gh >/dev/null 2>&1 || return 0
+  root=$(runtime_root)
+  [[ -d $root ]] || return 0
+  stamp="$root/merge-poll"
+  now=$(date +%s)
+  modified=$(stat -c %Y "$stamp" 2>/dev/null || printf '0')
+  ((now - modified >= ttl)) || return 0
+  : >"$stamp" 2>/dev/null || return 0
+  chmod 600 "$stamp" 2>/dev/null || true
+  ("$plugin_dir/bin/tmux-agent" check-merges >/dev/null 2>&1 &) 2>/dev/null || true
+}
+
 reconcile_runs() {
   local dir run pane expected snapshot line
   declare -A live_runs=()
   ensure_state_dirs
+  merge_watch
   snapshot=$(tmux list-panes -a -F $'#{pane_id}\t#{@agent-manager-run}' 2>/dev/null) || return 0
   while IFS=$'\t' read -r pane run; do
     [[ -n $pane ]] && live_runs[$pane]=$run
