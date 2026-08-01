@@ -19,7 +19,7 @@ require_command() {
   }
 }
 
-resume_agent_alias() {
+agent_alias() {
   local harness=$1 configured alias shell=${TMUX_AGENT_SHELL:-${SHELL:-}} check
   case $harness in
     claude)
