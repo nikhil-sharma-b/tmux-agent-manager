@@ -35,7 +35,7 @@ agent_alias() {
 
   [[ -z $configured && -x $shell ]] || return 1
   case ${shell##*/} in
-    fish) check="test \"(type -t $alias)\" = function" ;;
+    fish) check="test (type -t $alias) = function" ;;
     bash) check="kind=\$(type -t $alias); [[ \$kind == alias || \$kind == function ]]" ;;
     zsh) check="kind=\$(whence -w $alias); [[ \$kind == *': alias' || \$kind == *': function' ]]" ;;
     *) return 1 ;;

@@ -47,7 +47,10 @@ mkdir -p "$tmp/work/nested" "$tmp/home/project"
 [[ -z $(resolve_directory missing "$tmp/work" || true) ]] \
   || fail 'missing directory was accepted'
 mkdir -p "$tmp/commands" "$tmp/no-aliases"
-printf '%s\n' '#!/usr/bin/env bash' 'exit 0' >"$tmp/commands/fish"
+printf '%s\n' \
+  '#!/usr/bin/env bash' \
+  '[[ $2 == "test (type -t cc) = function" || $2 == "test (type -t oc) = function" ]]' \
+  >"$tmp/commands/fish"
 printf '%s\n' '#!/usr/bin/env bash' 'exit 1' >"$tmp/no-aliases/fish"
 chmod +x "$tmp/commands/fish" "$tmp/no-aliases/fish"
 [[ $(SHELL="$tmp/commands/fish" agent_alias claude) == cc ]] \
@@ -62,6 +65,24 @@ chmod +x "$tmp/commands/fish" "$tmp/no-aliases/fish"
   agent_alias claude || true) ]] || fail 'Claude configured command not preserved'
 [[ -z $(SHELL="$tmp/commands/fish" TMUX_AGENT_OPENCODE_COMMAND=/custom/opencode \
   agent_alias opencode || true) ]] || fail 'OpenCode configured command not preserved'
+if command -v fish >/dev/null 2>&1; then
+  mkdir -p "$tmp/fish/functions"
+  printf '%s\n' \
+    'function claude' \
+    '    printf "%s\n" $argv >$REAL_FISH_LOG' \
+    'end' >"$tmp/fish/functions/claude.fish"
+  printf '%s\n' \
+    'function cc' \
+    '    claude --dangerously-skip-permissions $argv' \
+    'end' >"$tmp/fish/functions/cc.fish"
+  [[ $(XDG_CONFIG_HOME="$tmp" SHELL="$(command -v fish)" agent_alias claude) == cc ]] \
+    || fail 'real Fish Claude alias not detected'
+  XDG_CONFIG_HOME="$tmp" REAL_FISH_LOG="$tmp/fish-args" \
+    fish -ic 'cc --resume test-session'
+  fish_args=$(<"$tmp/fish-args")
+  assert_contains "$fish_args" '--dangerously-skip-permissions'
+  assert_contains "$fish_args" '--resume'
+fi
 dedicated_run=$(new_uuid)
 dedicated_session=$(agent_session_name 'Review API' "$dedicated_run")
 TMUX_AGENT_NO_SWITCH=1 create_agent_session "$dedicated_session" "$tmp/work" 'Review API' 'sleep 60'
