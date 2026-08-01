@@ -24,8 +24,8 @@ check_optional() {
 for command in tmux fzf bash jq flock git sqlite3; do
   check_command "$command"
 done
-for harness in claude codex opencode; do
-  check_optional "$harness"
+for optional in claude codex opencode yazi; do
+  check_optional "$optional"
 done
 
 claude_settings=${CLAUDE_SETTINGS_FILE:-$HOME/.claude/settings.json}

@@ -39,6 +39,13 @@ export HOME="$tmp/home"
 source "$root/scripts/lib.sh"
 [[ $(truncate_text 'short label' 20) == 'short label' ]] || fail 'short label was truncated'
 [[ $(truncate_text 'long agent session label' 12) == 'long agent…' ]] || fail 'long label ellipsis incorrect'
+mkdir -p "$tmp/work/nested" "$tmp/home/project"
+[[ $(resolve_directory nested "$tmp/work") == "$tmp/work/nested" ]] \
+  || fail 'relative directory was not resolved from source cwd'
+[[ $(resolve_directory '~/project' "$tmp/work") == "$tmp/home/project" ]] \
+  || fail 'home directory was not expanded'
+[[ -z $(resolve_directory missing "$tmp/work" || true) ]] \
+  || fail 'missing directory was accepted'
 mkdir -p "$tmp/commands" "$tmp/no-aliases"
 printf '%s\n' '#!/usr/bin/env bash' 'exit 0' >"$tmp/commands/fish"
 printf '%s\n' '#!/usr/bin/env bash' 'exit 1' >"$tmp/no-aliases/fish"

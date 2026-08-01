@@ -90,6 +90,15 @@ expand_home() {
   esac
 }
 
+resolve_directory() {
+  local path base
+  path=$(expand_home "$1")
+  base=$2
+  [[ -n $path ]] || return 1
+  [[ $path == /* ]] || path="$base/$path"
+  (cd -P -- "$path" 2>/dev/null && pwd -P)
+}
+
 agent_session_name() {
   local label=$1 run=$2 name
   name=$(printf '%s' "$label" | tr ' /.:@' '------' | tr -cd '[:alnum:]_-')
