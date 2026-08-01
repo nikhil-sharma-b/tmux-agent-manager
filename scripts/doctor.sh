@@ -24,7 +24,7 @@ check_optional() {
 for command in tmux fzf bash jq flock git sqlite3; do
   check_command "$command"
 done
-for optional in claude codex opencode yazi; do
+for optional in claude codex opencode yazi gh; do
   check_optional "$optional"
 done
 

@@ -27,7 +27,11 @@ if [[ $mode == history ]]; then
         | map(select(. != "")) | join(" · ")) + $reset)]|@tsv' "$entry" >>"$list_tmp"
   done
 else
-  [[ $refresh == fast ]] || reconcile_runs >/dev/null 2>&1 || true
+  if [[ $refresh == fast ]]; then
+    merge_watch >/dev/null 2>&1 || true
+  else
+    reconcile_runs >/dev/null 2>&1 || true
+  fi
   for dir in "$(runtime_root)"/runs/*; do
     [[ -f $dir/meta.json ]] || continue
     event=$(latest_event "$dir/events.jsonl")

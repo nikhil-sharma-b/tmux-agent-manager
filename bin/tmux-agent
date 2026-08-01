@@ -16,6 +16,7 @@ Commands:
   event                Record a harness event
   seen RUN_ID          Mark current events seen
   reconcile            Archive dead panes and refresh status
+  check-merges         Archive runs whose pull request merged
   status               Print compact tmux status summary
   finder               Open the agent finder
   sidebar              Toggle the persistent sidebar
@@ -37,6 +38,9 @@ case $command in
     ;;
   reconcile)
     reconcile_runs
+    ;;
+  check-merges)
+    check_merged_runs
     ;;
   status)
     cache="$(runtime_root)/status"

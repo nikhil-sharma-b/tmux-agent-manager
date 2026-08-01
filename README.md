@@ -15,6 +15,7 @@ Every managed thread starts in its own `ai-<label>-<id>` tmux session. Worktree 
 - Git
 - [tmux-worktree](https://github.com/nikhil-sharma-b/tmux-worktree) for new-worktree creation, with `--no-editor` support
 - [Yazi](https://yazi-rs.github.io/) for optional directory browsing
+- [GitHub CLI](https://cli.github.com/) (`gh`) for optional pull-request merge detection
 
 ## Install
 
@@ -72,6 +73,13 @@ Details are cut to the available width rather than wrapped, and repeated events 
 - `? stale`: working event received no update within the configured threshold
 - `× crashed`: harness process exited unsuccessfully
 - `cancelled`: harness process was interrupted and moved to history
+- `merged`: the run's pull request merged, so the run moved to history
+
+A run started on a git branch is retired once its pull request merges. The check
+needs the GitHub CLI (`gh`) and runs at most once per
+`@agent-manager-merge-poll-seconds`. The pane and its harness keep running; only
+the tracked run moves to history. Without `gh` the check is skipped, and setting
+the interval to `0` disables it. Run it on demand with `tmux-agent check-merges`.
 
 Only metadata and lifecycle events are stored. Prompts, transcripts, and captured pane output are never persisted.
 
@@ -90,6 +98,7 @@ set -g @agent-manager-title ''
 set -g @agent-manager-stale-seconds '1800'
 set -g @agent-manager-history-limit '100'
 set -g @agent-manager-native-cache-seconds '60'
+set -g @agent-manager-merge-poll-seconds '120'
 set -g @agent-manager-worktree-command '~/repos/tmux-worktree/bin/tmux-worktree'
 ```
 
