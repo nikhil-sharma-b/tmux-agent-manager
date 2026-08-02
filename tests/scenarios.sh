@@ -32,7 +32,7 @@ check 'a permission notification asks for attention' "$(live)" $'\tattention\t'
 emit "$r1" "$p1" claude Stop
 check 'a finished turn is ready' "$(live)" $'\tready\t'
 
-scen 'Codex and OpenCode adapters'
+scen 'Codex, OpenCode and Antigravity adapters'
 p2=$(idle_pane); register r2 codex cdx "$p2"
 emit "$r2" "$p2" codex PreToolUse '{"thread_id":"t1"}'
 check 'the Codex adapter reports work' "$(live)" $'\tworking\t'
@@ -42,6 +42,27 @@ if command -v node >/dev/null 2>&1; then
     "$root/bin/tmux-agent" event attention permission.asked
   check 'an OpenCode permission asks for attention' "$(live)" 'oc'
 fi
+
+# The Antigravity adapter answers its hook first and reports afterwards, off the
+# agent's critical path, so the state arrives a moment later than the call.
+# Its own window: the test window has no room left to split.
+ag_pane=$(tmux new-window -d -P -F '#{pane_id}' -t test 'sleep 300')
+register ag_run antigravity agy "$ag_pane"
+live_shows() { [[ $(live) == *"$1"* ]]; }
+emit "$ag_run" "$ag_pane" antigravity PreInvocation '{"conversationId":"c1"}' >/dev/null
+wait_for 5 live_shows $'\tworking\t'
+check 'the Antigravity adapter reports work' "$(live)" $'\tworking\t'
+emit "$ag_run" "$ag_pane" antigravity Stop '{"conversationId":"c1","terminationReason":"model_stop"}' >/dev/null
+wait_for 5 live_shows $'\tready\t'
+check 'a finished Antigravity turn is ready' "$(live)" $'\tready\t'
+emit "$ag_run" "$ag_pane" antigravity Stop \
+  '{"conversationId":"c1","terminationReason":"error","error":"boom"}' >/dev/null
+wait_for 5 live_shows $'\tturn-failed\t'
+check 'a failed Antigravity turn is reported' "$(live)" $'\tturn-failed\t'
+check 'the conversation ID is remembered' \
+  "$(jq -r '(.native_ids // [])|join(",")' "$(runtime_root)/runs/$ag_run/meta.json" 2>/dev/null)" 'c1'
+# Stop ends a turn, not the process: the CLI is still sitting there.
+check 'a stopped turn does not retire the run' "$(live)" 'agy'
 
 scen 'How a run ends is what gets remembered'
 start_run() { # start_run <label> <exit code>; prints run id and session name

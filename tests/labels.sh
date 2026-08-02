@@ -51,6 +51,26 @@ else
   ok 'the pin held'
 fi
 
+scen 'An Antigravity conversation with no summary row yet'
+ag_pane=$(tmux split-window -d -P -F '#{pane_id}' -t test -c "$repo" 'sleep 300')
+IFS=$'\t' read -r _ ag_run < <("$root/bin/tmux-agent" register \
+  --harness antigravity --label '' --pane "$ag_pane")
+printf '{"conversationId":"conv-abc"}' |
+  TMUX_AGENT_RUN_ID=$ag_run TMUX_AGENT_PANE_ID=$ag_pane \
+    "$root/scripts/adapters/antigravity.sh" PreInvocation >/dev/null
+antigravity_knows_conversation() {
+  [[ $(jq -r '(.native_ids // [])|join(",")' \
+    "$(runtime_root)/runs/$ag_run/meta.json" 2>/dev/null) == *conv-abc* ]]
+}
+wait_for 5 antigravity_knows_conversation
+check 'the conversation ID reaches the run' \
+  "$(jq -r '(.native_ids // [])|join(",")' "$(runtime_root)/runs/$ag_run/meta.json")" 'conv-abc'
+# Antigravity writes its summary rows late, so the fallback row carries the
+# directory name until a real title turns up.
+printf '%s\tnative:antigravity\t%s\t900\t-\t0\t8\t%s\tantigravity\tx\ty\n' \
+  conv-abc "$repo" 'my-branch' >"$catalog"
+check 'the generic fallback title is adopted' "$(live)" 'my-branch'
+
 scen 'Saved rows keep the row contract'
 saved=$("$root/scripts/native-sessions.sh" collect "$tmp/snap" 2>/dev/null)
 check 'every saved row has eleven fields' \

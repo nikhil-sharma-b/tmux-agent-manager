@@ -1,6 +1,6 @@
 # tmux-agent-manager
 
-Manage Claude Code, Codex, and OpenCode conversations as tracked tmux panes. The popup jumps to agents across sessions and shows working, attention, unseen-result, stale, and failed states.
+Manage Claude Code, Codex, OpenCode, and Antigravity CLI conversations as tracked tmux panes. The popup jumps to agents across sessions and shows working, attention, unseen-result, stale, and failed states.
 
 There are two scopes. **Live** is what is running now. **Saved** is every conversation the harnesses can resume, enriched with what this plugin remembers about the runs that used them — the branch, and how each one ended. Runs whose conversation the harness no longer has still appear there; opening one starts a fresh agent in the directory the work happened in.
 
@@ -126,6 +126,18 @@ The manager is scoped to the current tmux server. It tracks managed launches imm
 One sidebar pane follows the most recently active tmux client. With multiple attached clients, it moves to whichever client changes panes or windows last.
 
 OpenCode loads the adapter from `~/.config/opencode/plugin/tmux-agent-manager.js`.
+
+Antigravity CLI (`agy`, tested against 1.1.9) has no alias convention, so it is launched directly and resumes with `--conversation <id>`:
+
+```tmux
+set-environment -g TMUX_AGENT_ANTIGRAVITY_COMMAND agy
+```
+
+Its hooks go into `~/.gemini/config/hooks.json` under a `tmux-agent-manager` entry, since that file is keyed by hook name rather than by event. Setup rewrites only that entry and leaves every other named hook alone; an entry of that name it did not write is reported as a collision instead of being replaced. Override the path with `ANTIGRAVITY_HOOKS_FILE`.
+
+Antigravity offers no permission or session-lifecycle hook, so `working`, `ready`, and `turn-failed` come from the harness while `starting`, `exited`, `cancelled`, and `crashed` come from the wrapper around a managed launch. It never reports `attention`, and an `agy` started outside the plugin stays listed until its pane dies. The status hook is deliberately not registered for `PreToolUse`: that hook has to return a permission decision, and answering it would approve or block tool calls rather than just observe them.
+
+Saved Antigravity conversations come from `~/.gemini/antigravity-cli` (override with `ANTIGRAVITY_DATA_DIR`). Summary rows are written lazily, so a conversation with no row yet is still listed and resumable under its directory name, taken from the conversation files and the workspace cache beside them.
 
 List or refresh the saved sessions from the command line (`sessions` still works):
 

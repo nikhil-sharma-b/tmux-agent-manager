@@ -23,7 +23,7 @@ run=${run:-$(new_uuid)}
 [[ -n $harness ]] || { printf 'tmux-agent run: --harness required\n' >&2; exit 2; }
 valid_id "$thread" && valid_id "$run" || { printf 'tmux-agent run: invalid ID\n' >&2; exit 2; }
 case $harness in
-  claude|codex|opencode) ;;
+  claude|codex|opencode|antigravity) ;;
   *) printf 'tmux-agent run: unsupported harness: %s\n' "$harness" >&2; exit 2 ;;
 esac
 
@@ -53,6 +53,10 @@ case $harness in
     [[ -n $resume ]] && shell_alias=$(agent_alias opencode || true)
     command=("${TMUX_AGENT_OPENCODE_COMMAND:-opencode}")
     [[ -n $resume ]] && command+=(--session "$resume")
+    ;;
+  antigravity)
+    command=("${TMUX_AGENT_ANTIGRAVITY_COMMAND:-agy}")
+    [[ -n $resume ]] && command+=(--conversation "$resume")
     ;;
 esac
 command+=("$@")

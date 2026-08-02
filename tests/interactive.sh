@@ -20,7 +20,9 @@ scen 'Creating an agent in the current directory'
 wiz=$(wizard)
 wait_for 5 showing "$wiz" 'step 1 of 2'
 check 'it opens on the agent step' "$(screen "$wiz")" 'step 1 of 2'
-check 'every harness is offered' "$(screen "$wiz")" 'opencode'
+for offered in claude codex opencode antigravity; do
+  check "the $offered harness is offered" "$(screen "$wiz")" "$offered"
+done
 tmux send-keys -t "$wiz" Enter
 wait_for 5 showing "$wiz" 'step 2 of 2'
 check 'there is no label step' "$(screen "$wiz")" 'step 2 of 2'
