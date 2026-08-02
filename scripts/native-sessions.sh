@@ -30,6 +30,15 @@ refresh() {
   chmod 700 "$cache_dir"
   tmp="$cache_file.tmp.$$"
   title_file="$cache_dir/claude-titles.tmp.$$"
+  # A refresh that is interrupted mid-scan would otherwise leave its scratch
+  # files behind for good: the names carry a pid that never comes back. The
+  # paths are expanded now because the trap runs after these locals are gone.
+  # A signal has to end the run rather than fall through to the sort, which
+  # would publish a catalog built from a half-written scan.
+  trap "rm -f '$tmp' '$tmp.sorted' '$title_file'" EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  find "$cache_dir" -maxdepth 1 -name '*.tmp.*' -mmin +60 -delete 2>/dev/null || true
   : >"$tmp"
   : >"$title_file"
 
@@ -81,8 +90,11 @@ refresh() {
     ' | jq -r '.[] | [.id,.title,.cwd,(.updated // 0)]|@tsv')
   fi
 
-  sort -t $'\t' -k4,4nr "$tmp" >"$cache_file"
-  chmod 600 "$cache_file"
+  # Written through a rename so an interrupted refresh cannot leave readers
+  # looking at a half-sorted catalog.
+  sort -t $'\t' -k4,4nr "$tmp" >"$tmp.sorted"
+  chmod 600 "$tmp.sorted"
+  mv "$tmp.sorted" "$cache_file"
   rm -f "$tmp" "$title_file"
 }
 
