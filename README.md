@@ -2,6 +2,8 @@
 
 Manage Claude Code, Codex, and OpenCode conversations as tracked tmux panes. The popup jumps to agents across sessions and shows working, attention, unseen-result, stale, and failed states.
 
+There are two scopes. **Live** is what is running now. **Saved** is every conversation the harnesses can resume, enriched with what this plugin remembers about the runs that used them — the branch, and how each one ended. Runs whose conversation the harness no longer has still appear there; opening one starts a fresh agent in the directory the work happened in.
+
 Every managed thread starts in its own `ai-<label>-<id>` tmux session. Worktree threads also get unique sessions, even when they reuse an existing branch worktree.
 
 ## Requirements
@@ -35,7 +37,9 @@ Reload tmux, then install harness adapters:
 
 The persistent sidebar opens automatically. Press `prefix + A` to hide or reopen it in the current window.
 
-When creating an agent, its workspace can be the current directory, a typed directory path, a directory browsed with Yazi, or a new worktree. Typed relative paths start from the current pane's directory; absolute paths and `~/...` are also supported. In Yazi, navigate to the wanted directory and quit to use it.
+Creating an agent asks two things: the harness and the workspace. There is no label step. A new run is named after its git branch, or its directory when there is no branch, and adopts the harness's own session title as soon as the harness writes one. Renaming pins the name, so an adopted title never replaces one you chose.
+
+The workspace can be the current directory, a typed directory path, a directory browsed with Yazi, or a new worktree. Typed relative paths start from the current pane's directory; absolute paths and `~/...` are also supported. In Yazi, navigate to the wanted directory and quit to use it.
 
 ## Controls
 
@@ -44,9 +48,8 @@ Sidebar controls. Press `?` in the sidebar for this list in the pane:
 - `j` / `k` or arrows: select agent
 - `Enter`: jump to selected agent
 - `n`: create an agent
-- `h`: toggle live agents and history
-- `s`: toggle native Claude, Codex, and OpenCode sessions
-- `/`, `f`, or `o`: fuzzy search the current live, history, or saved view in the sidebar pane
+- `h` or `s`: toggle live agents and saved sessions
+- `/`, `f`, or `o`: fuzzy search the current view in the sidebar pane
 - `r`: rename the selected managed session
 - `x`: stop the selected managed session
 - `R`: refresh
@@ -56,7 +59,7 @@ The sidebar shows one line per agent: a state glyph, the label, and the state or
 
 Press `prefix + Ctrl-a` to open the detailed popup directly.
 
-Search fuzzy-matches the current scope. Scope tabs stay in the header; the actions are `Ctrl-l` live, `Ctrl-h` history, `Ctrl-s` saved sessions, `Ctrl-n` new, `Ctrl-e` rename, `Ctrl-x` stop, `Ctrl-o` details, `Ctrl-p` pane output, `Ctrl-r` refresh.
+Search fuzzy-matches the current scope. Scope tabs stay in the header; the actions are `Ctrl-l` live, `Ctrl-s` saved sessions, `Ctrl-n` new, `Ctrl-e` rename, `Ctrl-x` stop, `Ctrl-o` details, `Ctrl-p` pane output, `Ctrl-r` refresh.
 
 Search matches the sidebar layout: scope tabs on top, keys along the bottom. It adapts to the terminal it opens in, so the same keys work in the popup and in the sidebar pane:
 
@@ -124,11 +127,11 @@ One sidebar pane follows the most recently active tmux client. With multiple att
 
 OpenCode loads the adapter from `~/.config/opencode/plugin/tmux-agent-manager.js`.
 
-List or refresh every resumable native harness session from the command line:
+List or refresh the saved sessions from the command line (`sessions` still works):
 
 ```sh
-tmux-agent sessions
-tmux-agent sessions refresh
+tmux-agent saved
+tmux-agent saved refresh
 ```
 
 The catalog stores only session IDs, generated titles, directories, and timestamps. Prompt and transcript bodies are not cached.

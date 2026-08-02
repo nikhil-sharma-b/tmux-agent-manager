@@ -20,7 +20,8 @@ exec 9>"$dir/.lock"
 flock 9
 [[ -f $dir/meta.json ]] || exit 0
 tmp="$dir/meta.json.tmp.$$"
-jq --arg label "$label" '.label=$label' "$dir/meta.json" >"$tmp"
+# Pinning is what stops the harness title from replacing a name you chose.
+jq --arg label "$label" '.label=$label | .label_pinned=true' "$dir/meta.json" >"$tmp"
 chmod 600 "$tmp"
 mv "$tmp" "$dir/meta.json"
 flock -u 9

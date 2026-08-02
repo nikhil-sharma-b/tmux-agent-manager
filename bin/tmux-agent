@@ -20,7 +20,7 @@ Commands:
   status               Print compact tmux status summary
   finder               Open the agent finder
   sidebar              Toggle the persistent sidebar
-  sessions [refresh]   List native harness sessions
+  saved [refresh]      List saved harness sessions
   setup [--apply]      Preview or install harness adapters
   doctor               Check dependencies and adapters
 EOF
@@ -57,7 +57,7 @@ case $command in
   sidebar)
     exec "$plugin_dir/scripts/sidebar-toggle.sh" toggle "${TMUX_PANE:-}" "${TMUX_AGENT_CLIENT:-}"
     ;;
-  sessions)
+  saved|sessions)
     exec "$plugin_dir/scripts/native-sessions.sh" "${1:-list}"
     ;;
   setup|doctor)

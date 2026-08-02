@@ -15,8 +15,24 @@ emit_row() {
   local harness=$1 id=$2 title=$3 cwd=$4 updated=$5 state
   # A stray tab or newline in an ID would shift every later column of the row.
   [[ $id =~ ^[[:alnum:]_.:-]+$ ]] || return 0
-  title=$(clean_text "$title")
   cwd=$(clean_text "$cwd")
+  # Codex has no title of its own and falls back to the raw first prompt, which
+  # arrives with escape sequences still in it and is often just a slash command.
+  # Anything that is not a usable name defers to the directory.
+  title=${title//\\n/ }
+  title=${title//\\t/ }
+  title=$(clean_text "$title")
+  title=$(printf '%s' "$title" | tr -s ' ')
+  title=${title# }
+  title=${title#<task>}
+  title=${title# }
+  case $title in
+    /*|-|'') title=${cwd##*/} ;;
+  esac
+  [[ -n $title ]] || title=$harness
+  # A first prompt can run to thousands of characters. Keeping the whole thing
+  # bloats every row and gives the fuzzy matcher a haystack instead of a name.
+  title=$(truncate_text "$title" 72)
   state="$harness · saved"
   printf '%s\tnative:%s\t%s\t%s\t-\t0\t8\t%s\t%s\t\033[90m·\033[0m %-26s\t\033[90m%s · %s\033[0m\n' \
     "$id" "$harness" "$cwd" "$updated" "$title" "$state" "$(truncate_text "$title" 26)" \
@@ -71,10 +87,10 @@ refresh() {
       emit_row codex "$id" "$title" "$cwd" "$updated" >>"$tmp"
     done < <(sqlite3 -readonly -json "$codex_db" "
       SELECT id, COALESCE(NULLIF(name, ''), NULLIF(title, ''), 'Codex session') AS title,
-        cwd, source,
+        cwd, COALESCE(NULLIF(source, ''), '-') AS source,
         COALESCE(NULLIF(recency_at_ms, 0), updated_at_ms, updated_at * 1000) AS updated
       FROM threads WHERE archived = 0 ORDER BY updated DESC
-    " | jq -r '.[] | [.id,.title,.cwd,.source,(.updated // 0)]|@tsv')
+    " | jq -r '.[] | [.id,(.title // "-"),(.cwd // ""),(.source // "-"),(.updated // 0)]|@tsv')
   fi
 
   if [[ -f $opencode_db ]] && command -v sqlite3 >/dev/null 2>&1; then
@@ -82,12 +98,13 @@ refresh() {
       [[ -n $id && -n $cwd ]] || continue
       [[ -n $title ]] || title=${cwd##*/}
       emit_row opencode "$id" "$title" "$cwd" "$updated" >>"$tmp"
-    done < <(sqlite3 -readonly -json "$opencode_db" '
-      SELECT id, title, directory AS cwd, time_updated AS updated
+    done < <(sqlite3 -readonly -json "$opencode_db" "
+      SELECT id, COALESCE(NULLIF(title, ''), '-') AS title,
+        directory AS cwd, time_updated AS updated
       FROM session
       WHERE parent_id IS NULL AND time_archived IS NULL
       ORDER BY time_updated DESC
-    ' | jq -r '.[] | [.id,.title,.cwd,(.updated // 0)]|@tsv')
+    " | jq -r '.[] | [.id,(.title // "-"),(.cwd // ""),(.updated // 0)]|@tsv')
   fi
 
   # Written through a rename so an interrupted refresh cannot leave readers
@@ -96,6 +113,102 @@ refresh() {
   chmod 600 "$tmp.sorted"
   mv "$tmp.sorted" "$cache_file"
   rm -f "$tmp" "$title_file"
+}
+
+# Saved is the harnesses' own catalog of resumable conversations, enriched with
+# whatever this plugin remembers about runs that used them. An archived run
+# whose conversation is gone still shows up: it can be reopened in its old
+# directory, just not resumed.
+collect_saved() {
+  local snapshot_dir=$1 tmp history_tsv dim reset
+  tmp="$snapshot_dir/list.tmp"
+  history_tsv="$snapshot_dir/history.tsv"
+  dim=$(printf '\033[90m')
+  reset=$(printf '\033[0m')
+  : >"$tmp"
+  : >"$history_tsv"
+
+  # harness, native id, run, label, pinned, branch, state, ended_at, cwd
+  local history_dir
+  history_dir=$(history_root)
+  if compgen -G "$history_dir/*.json" >/dev/null; then
+    jq -r 'def clean: gsub("[\t\r\n]";" ");
+      [.harness, ((.native_ids // [])|last // ""), .run_id, (.label|clean),
+       ((.label_pinned // false)|tostring), ((.branch // "")|clean),
+       (.last_event.state // "exited"), (.ended_at // 0), (.cwd // "")]|@tsv' \
+      "$history_dir"/*.json 2>/dev/null | sort -t $'\t' -k8,8nr >"$history_tsv" || true
+  fi
+
+  awk -F '\t' -v OFS='\t' -v dim="$dim" -v reset="$reset" '
+    function fit(s,   out) {
+      out = s
+      if (length(out) > 26) out = substr(out, 1, 25) "…"
+      while (length(out) < 26) out = out " "
+      return out
+    }
+    function join(a, b, c, d,   parts) {
+      parts = a
+      if (b != "") parts = parts " · " b
+      if (c != "") parts = parts " · " c
+      if (d != "") parts = parts " · " d
+      return parts
+    }
+    function emit(id, kind, cwd, when, label, state, meta,   glyph) {
+      glyph = (state == "crashed") ? "\033[31;1m×\033[0m" : dim "·" reset
+      print id, kind, cwd, when, "-", "0", (9999999999 - when), label, state,
+        glyph " " fit(label), dim meta reset
+    }
+    # Pass 1: the plugin history, keyed by harness and native id.
+    NR == FNR {
+      if ($2 != "") {
+        key = $1 SUBSEP $2
+        if (!(key in seen_key)) {
+          seen_key[key] = 1
+          h_run[key] = $3; h_label[key] = $4; h_pinned[key] = $5
+          h_branch[key] = $6; h_state[key] = $7; h_ended[key] = $8
+          h_cwd[key] = $9
+        }
+      } else {
+        orphan_run[++orphans] = $3; orphan_label[orphans] = $4
+        orphan_branch[orphans] = $6; orphan_state[orphans] = $7
+        orphan_ended[orphans] = $8; orphan_cwd[orphans] = $9
+        orphan_harness[orphans] = $1
+      }
+      next
+    }
+    # Pass 2: the harness catalog, enriched where a run used the conversation.
+    {
+      harness = substr($2, 8)
+      key = harness SUBSEP $1
+      label = $8
+      state = "saved"
+      branch = ""
+      if (key in seen_key) {
+        matched[key] = 1
+        if (h_pinned[key] == "true" && h_label[key] != "") label = h_label[key]
+        state = h_state[key]
+        branch = h_branch[key]
+      }
+      emit($1, $2, $3, $4 + 0, label, state, join(harness, branch, state, ""))
+    }
+    END {
+      # Archived runs whose conversation the harness no longer offers.
+      for (i = 1; i <= orphans; i++)
+        emit(orphan_run[i], "history-only", orphan_cwd[i], orphan_ended[i],
+          orphan_label[i], orphan_state[i],
+          join(orphan_harness[i], orphan_branch[i], orphan_state[i], "no resume"))
+      for (key in seen_key) {
+        if (key in matched) continue
+        split(key, part, SUBSEP)
+        emit(h_run[key], "history-only", h_cwd[key], h_ended[key], h_label[key],
+          h_state[key], join(part[1], h_branch[key], h_state[key], "no resume"))
+      }
+    }
+  ' "$history_tsv" "$cache_file" >>"$tmp"
+
+  sort -t $'\t' -k7,7n "$tmp" >"$snapshot_dir/list"
+  rm -f "$tmp" "$history_tsv"
+  cat "$snapshot_dir/list"
 }
 
 ensure_fresh() {
@@ -115,8 +228,7 @@ case ${1:-list} in
   collect)
     snapshot_dir=${2:?snapshot directory required}
     ensure_fresh
-    cp "$cache_file" "$snapshot_dir/list"
-    cat "$snapshot_dir/list"
+    collect_saved "$snapshot_dir"
     ;;
   list)
     ensure_fresh

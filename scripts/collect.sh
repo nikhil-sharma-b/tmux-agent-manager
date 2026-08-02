@@ -10,34 +10,17 @@ refresh=${3:-full}
 list_tmp="$snapshot_dir/list.tmp"
 : >"$list_tmp"
 
-dim=$(printf '\033[90m')
-reset=$(printf '\033[0m')
+# Ended runs are folded into the saved list that native-sessions.sh builds, so
+# this only ever produces the live one.
+[[ $mode == live ]] || exit 0
 
-if [[ $mode == history ]]; then
-  ensure_state_dirs
-  for entry in "$(history_root)"/*.json; do
-    [[ -f $entry ]] || continue
-    # How a run ended is the thing you look for in history, so it goes in the
-    # state column instead of the constant "history". The sort key is an
-    # inverted end time, which lands the most recent work at the top.
-    jq -r --arg dim "$dim" --arg reset "$reset" '
-      def clean: gsub("[\\t\\r\\n]";" ");
-      def fit: (if length > 26 then .[0:25] + "…" else . end)
-        | (if length < 26 then . + (" " * (26 - length)) else . end);
-      (.last_event.state // "exited") as $state |
-      [.run_id,"history","-","-","-","0",
-      ((9999999999 - (.ended_at // 0))|tostring),(.label|clean),$state,
-      ($dim + "·" + $reset + " " + (.label|clean|fit)),
-      ($dim + ([$state,.harness,((.branch // "")|clean),(.ended_at|todate|.[0:10])]
-        | map(select(. != "")) | join(" · ")) + $reset)]|@tsv' "$entry" >>"$list_tmp"
-  done
+if [[ $refresh == fast ]]; then
+  merge_watch >/dev/null 2>&1 || true
 else
-  if [[ $refresh == fast ]]; then
-    merge_watch >/dev/null 2>&1 || true
-  else
-    reconcile_runs >/dev/null 2>&1 || true
-  fi
-  for dir in "$(runtime_root)"/runs/*; do
+  reconcile_runs >/dev/null 2>&1 || true
+fi
+unnamed=0
+for dir in "$(runtime_root)"/runs/*; do
     [[ -f $dir/meta.json ]] || continue
     event=$(latest_event "$dir/events.jsonl")
     state=$(effective_state "$(jq -r '.state' <<<"$event")" "$(jq -r '.at' <<<"$event")")
@@ -58,16 +41,31 @@ else
       crashed) glyph='\033[31;1m×\033[0m'; priority=5 ;;
       *) glyph='\033[90m·\033[0m'; priority=6 ;;
     esac
-    label=$(jq -r '.label|gsub("[\\t\\r\\n]";" ")' "$dir/meta.json")
-    harness=$(jq -r '.harness' "$dir/meta.json")
-    branch=$(jq -r '.branch|gsub("[\\t\\r\\n]";" ")' "$dir/meta.json")
+    # One read for every field this row needs, including whether the run is
+    # still waiting to be named by its harness. Tab counts as IFS whitespace,
+    # so a tab-separated read would swallow the empty fields and shift the
+    # rest along; a line per value keeps them.
+    mapfile -t fields < <(jq -r '
+      def clean: gsub("[\\t\\r\\n]";" ");
+      (.label|clean), .harness, (.branch|clean), ((.adopted_title // "")|clean),
+      ((.label_pinned // false)|tostring), ((.native_ids // [])|last // "")
+    ' "$dir/meta.json")
+    label=${fields[0]:-} harness=${fields[1]:-} branch=${fields[2]:-}
+    adopted=${fields[3]:-} pinned=${fields[4]:-} native=${fields[5]:-}
+    if [[ $pinned != true && -z $adopted && -n $native ]]; then
+      adopt_saved_title "${dir##*/}" || true
+      label=$(jq -r '.label|gsub("[\\t\\r\\n]";" ")' "$dir/meta.json")
+      unnamed=1
+    fi
     row_meta="$state · $harness"
     [[ -n $branch ]] && row_meta="$row_meta · $branch"
     printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%b %-26s\t\033[90m%s\033[0m\n' \
       "${dir##*/}" live "$session" "$window" "$pane" "$size" "$priority" "$label" "$state" \
       "$glyph" "$(truncate_text "$label" 26)" "$row_meta" >>"$list_tmp"
-  done
-fi
+done
+# A run still waiting for its name is the only reason to rebuild the catalog
+# off the back of a live refresh, and the TTL still governs how often.
+((unnamed == 0)) || native_catalog_watch >/dev/null 2>&1 || true
 
 sort -t $'\t' -k7,7n -k8,8 "$list_tmp" >"$snapshot_dir/list"
 cat "$snapshot_dir/list"

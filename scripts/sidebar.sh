@@ -6,8 +6,11 @@ source "$script_dir/lib.sh"
 
 snapshot_dir=$(mktemp -d "${TMPDIR:-/tmp}/tmux-agent-sidebar.XXXXXX")
 mode=$(tmux show-option -gqv @agent-manager-sidebar-mode)
+# A server that remembers the old history or sessions scope opens on saved,
+# which is where both of them ended up.
 case $mode in
-  live|history|sessions) ;;
+  live) ;;
+  saved|history|sessions) mode=saved ;;
   *) mode=live ;;
 esac
 selected=0
@@ -69,7 +72,7 @@ select_index() {
 
 refresh_rows() {
   local geometry signature
-  if [[ $mode == sessions ]]; then
+  if [[ $mode == saved ]]; then
     "$script_dir/native-sessions.sh" collect "$snapshot_dir" >/dev/null 2>&1 || true
   else
     "$script_dir/collect.sh" "$snapshot_dir" "$mode" fast >/dev/null 2>&1 || true
@@ -109,8 +112,8 @@ read_geometry() {
 # Mode tabs double as the only always-visible label for h and s.
 render_tabs() {
   local tab out=' '
-  for tab in live history saved; do
-    if [[ $tab == "$mode" || ($tab == saved && $mode == sessions) ]]; then
+  for tab in live saved; do
+    if [[ $tab == "$mode" ]]; then
       out+=$(printf '\033[1;4m%s\033[0m  ' "$tab")
     else
       out+=$(printf '\033[90m%s\033[0m  ' "$tab")
@@ -133,8 +136,7 @@ render_help() {
   help_row '↵' 'open agent'
   help_row 'n' 'new agent'
   help_row '/' 'fuzzy find'
-  help_row 'h' 'history'
-  help_row 's' 'saved sessions'
+  help_row 'h s' 'saved sessions'
   help_row 'r' 'rename agent'
   help_row 'x' 'stop agent'
   help_row 'R' 'refresh'
@@ -163,7 +165,7 @@ render_frame() {
   printf '\033[90m%s\033[0m\033[K\n' "$rule"
 
   if ((count == 0)); then
-    printf '\033[K\n \033[90mNo %s agents\033[0m\033[K\n' "$([[ $mode == sessions ]] && printf '%s' saved || printf '%s' "$mode")"
+    printf '\033[K\n \033[90mNo %s agents\033[0m\033[K\n' "$mode"
     printf ' \033[90mpress n to start one\033[0m\033[K\n'
   else
     end=$((offset + max_rows))
@@ -255,15 +257,8 @@ while true; do
           fi
           break
           ;;
-        h)
-          [[ $mode == live ]] && mode=history || mode=live
-          persist_mode
-          selected=0
-          selected_run=''
-          break
-          ;;
-        s)
-          [[ $mode == sessions ]] && mode=live || mode=sessions
+        h|s)
+          [[ $mode == live ]] && mode=saved || mode=live
           persist_mode
           selected=0
           selected_run=''

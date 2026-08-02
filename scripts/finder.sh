@@ -8,12 +8,14 @@ require_command fzf
 snapshot_dir=$(mktemp -d "${TMPDIR:-/tmp}/tmux-agent-manager.XXXXXX")
 trap 'rm -rf "$snapshot_dir"' EXIT INT TERM
 mode=${1:-live}
+# history and sessions merged into saved; both names still reach here from
+# older callers and from a tmux server that persisted the previous scope.
 case $mode in
-  live|history|sessions) ;;
+  live) ;;
+  saved|history|sessions) mode=saved ;;
   *) mode=live ;;
 esac
 scope=$mode
-[[ $scope == sessions ]] && scope=saved
 "$script_dir/finder-collect.sh" "$snapshot_dir" "$mode" >/dev/null
 
 # The finder runs both in the wide popup and inside the narrow sidebar pane, so
@@ -59,7 +61,7 @@ fi
 
 header_for() {
   local active=$1 tab out=''
-  for tab in live history saved; do
+  for tab in live saved; do
     if [[ $tab == "$active" ]]; then
       out+=$(printf '\033[1;4m%s\033[0m  ' "$tab")
     else
@@ -91,8 +93,7 @@ fzf \
   --bind='ctrl-e:execute("$TMUX_AGENT_SCRIPTS/rename.sh" {1})+reload("$TMUX_AGENT_SCRIPTS/finder-collect.sh" "$TMUX_AGENT_SNAPSHOT")' \
   --bind='ctrl-x:execute("$TMUX_AGENT_SCRIPTS/stop.sh" {1})+reload("$TMUX_AGENT_SCRIPTS/finder-collect.sh" "$TMUX_AGENT_SNAPSHOT")' \
   --bind='ctrl-p:change-preview("$TMUX_AGENT_SCRIPTS/capture.sh" {1})' \
-  --bind="ctrl-h:reload(\"\$TMUX_AGENT_SCRIPTS/finder-collect.sh\" \"\$TMUX_AGENT_SNAPSHOT\" history)+change-header($(header_for history))" \
-  --bind="ctrl-s:reload(\"\$TMUX_AGENT_SCRIPTS/finder-collect.sh\" \"\$TMUX_AGENT_SNAPSHOT\" sessions)+change-header($(header_for saved))" \
+  --bind="ctrl-s:reload(\"\$TMUX_AGENT_SCRIPTS/finder-collect.sh\" \"\$TMUX_AGENT_SNAPSHOT\" saved)+change-header($(header_for saved))" \
   --bind="ctrl-l:reload(\"\$TMUX_AGENT_SCRIPTS/finder-collect.sh\" \"\$TMUX_AGENT_SNAPSHOT\" live)+change-header($(header_for live))" \
   --bind='ctrl-r:reload("$TMUX_AGENT_SCRIPTS/finder-collect.sh" "$TMUX_AGENT_SNAPSHOT")' \
   <"$snapshot_dir/list" >/dev/null

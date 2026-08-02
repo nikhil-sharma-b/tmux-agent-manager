@@ -368,26 +368,35 @@ finder_snapshot="$tmp/finder"
 mkdir -p "$finder_snapshot"
 finder_live=$("$root/scripts/finder-collect.sh" "$finder_snapshot" live)
 assert_contains "$finder_live" 'nav-a'
-finder_history=$("$root/scripts/finder-collect.sh" "$finder_snapshot" history)
-assert_contains "$finder_history" 'fix auth'
-# History says how each run ended, newest first, rather than a constant label.
-history_rows=$("$root/scripts/collect.sh" "$snapshot" history)
-assert_contains "$history_rows" $'\tcrashed\t'
-assert_contains "$history_rows" $'\texited\t'
-[[ $(cut -f9 <<<"$history_rows" | grep -c '^history$') == 0 ]] \
-  || fail 'history rows still hide the terminal state'
-# Several runs can share an end second, so compare times rather than identities.
-newest=$(jq -r '.ended_at' "$tmp/state/tmux-agent-manager/history"/*.json | sort -rn | head -n 1)
-first_row_run=$(head -n 1 <<<"$history_rows" | cut -f1)
-[[ $(jq -r '.ended_at' "$tmp/state/tmux-agent-manager/history/$first_row_run.json") == "$newest" ]] \
-  || fail 'history is not ordered newest first'
-finder_saved=$(XDG_CACHE_HOME="$native/cache" \
-  "$root/scripts/finder-collect.sh" "$finder_snapshot" sessions)
-assert_contains "$finder_saved" 'Claude saved'
-finder_saved=$(XDG_CACHE_HOME="$native/cache" \
+# Ended runs and the harnesses' own conversations share one saved scope, so the
+# old history and sessions names must land there too.
+saved_rows=$(XDG_CACHE_HOME="$native/cache" \
+  "$root/scripts/finder-collect.sh" "$finder_snapshot" saved)
+assert_contains "$saved_rows" 'Claude saved'
+assert_contains "$saved_rows" 'OpenCode saved'
+assert_contains "$saved_rows" 'fix auth'
+[[ $(<"$finder_snapshot/mode") == saved ]] || fail 'saved scope was not persisted'
+XDG_CACHE_HOME="$native/cache" \
+  "$root/scripts/finder-collect.sh" "$finder_snapshot" history >/dev/null
+[[ $(<"$finder_snapshot/mode") == saved ]] || fail 'the history scope did not map to saved'
+XDG_CACHE_HOME="$native/cache" \
+  "$root/scripts/finder-collect.sh" "$finder_snapshot" sessions >/dev/null
+[[ $(<"$finder_snapshot/mode") == saved ]] || fail 'the sessions scope did not map to saved'
+saved_rows=$(XDG_CACHE_HOME="$native/cache" \
   "$root/scripts/finder-collect.sh" "$finder_snapshot")
-assert_contains "$finder_saved" 'OpenCode saved'
-[[ $(<"$finder_snapshot/mode") == sessions ]] || fail 'finder refresh lost current scope'
+[[ $(awk -F '\t' '{print NF}' <<<"$saved_rows" | sort -u) == 11 ]] \
+  || fail 'saved rows broke the eleven-field row contract'
+# How a run ended survives into the merged list, and the newest work leads.
+assert_contains "$saved_rows" $'\tcrashed\t'
+newest=$(jq -r '.ended_at' "$tmp/state/tmux-agent-manager/history"/*.json | sort -rn | head -n 1)
+[[ $(head -n 1 <<<"$saved_rows" | cut -f4) -ge $newest ]] \
+  || fail 'saved list is not ordered newest first'
+# A run whose conversation the harness never recorded still opens.
+assert_contains "$saved_rows" 'history-only'
+orphan_row=$(grep -m1 $'\thistory-only\t' <<<"$saved_rows")
+[[ -n $(cut -f3 <<<"$orphan_row") ]] || fail 'a non-resumable row lost its directory'
+[[ -z $("$root/scripts/collect.sh" "$snapshot" history) ]] \
+  || fail 'collect.sh still builds a separate history list'
 tmux set-environment -g XDG_RUNTIME_DIR "$XDG_RUNTIME_DIR"
 tmux set-environment -g XDG_STATE_HOME "$XDG_STATE_HOME"
 tmux set-environment -g XDG_CACHE_HOME "$native/cache"
@@ -467,19 +476,19 @@ tmux display-message -p -t "$replacement" '#{pane_id}' >/dev/null || fail 'reope
 tmux send-keys -t "$replacement" s
 for _ in {1..50}; do
   mode=$(tmux show-option -gqv @agent-manager-sidebar-mode)
-  [[ $mode == sessions ]] && break
+  [[ $mode == saved ]] && break
   sleep 0.01
 done
-[[ $mode == sessions ]] || fail 'sidebar did not persist sessions mode'
+[[ $mode == saved ]] || fail 'sidebar did not persist saved mode'
 "$root/scripts/sidebar-toggle.sh" toggle "$target" ''
 "$root/scripts/sidebar-toggle.sh" toggle "$target" ''
 replacement=$(tmux show-option -gqv @agent-manager-sidebar-pane)
 for _ in {1..50}; do
   mode=$(tmux show-option -pqv -t "$replacement" @agent-manager-sidebar-mode)
-  [[ $mode == sessions ]] && break
+  [[ $mode == saved ]] && break
   sleep 0.01
 done
-[[ $mode == sessions ]] || fail 'sidebar did not restore sessions mode'
+[[ $mode == saved ]] || fail 'sidebar did not restore the saved mode'
 # A prompt appended to the drawn frame wraps through the footer and scrolls the
 # header away, so rename and stop must own the screen while they ask.
 tmux send-keys -t "$replacement" s
