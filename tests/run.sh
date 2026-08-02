@@ -36,6 +36,13 @@ export XDG_RUNTIME_DIR="$tmp/runtime"
 export XDG_STATE_HOME="$tmp/state"
 export HOME="$tmp/home"
 
+# Anything the test server spawns inherits the server's environment, not this
+# shell's. Without these the suite writes its runs into the real runtime
+# directory instead of the temporary one.
+tmux set-environment -g XDG_RUNTIME_DIR "$XDG_RUNTIME_DIR"
+tmux set-environment -g XDG_STATE_HOME "$XDG_STATE_HOME"
+tmux set-environment -g HOME "$HOME"
+
 source "$root/scripts/lib.sh"
 [[ $(truncate_text 'short label' 20) == 'short label' ]] || fail 'short label was truncated'
 [[ $(truncate_text 'long agent session label' 12) == 'long agent…' ]] || fail 'long label ellipsis incorrect'
