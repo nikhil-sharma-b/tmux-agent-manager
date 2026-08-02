@@ -136,7 +136,66 @@ if command -v socat >/dev/null 2>&1; then
   printf '{"thread_id":"socket-native"}\n' | TMUX_AGENT_BIN=/bin/true \
     socat - EXEC:"$root/scripts/adapters/codex.sh PreToolUse" \
     || fail 'Codex adapter could not read socket-backed stdin'
+  printf '{"conversationId":"socket-native"}\n' | TMUX_AGENT_BIN=/bin/true \
+    socat - EXEC:"$root/scripts/adapters/antigravity.sh PostToolUse" \
+    || fail 'Antigravity adapter could not read socket-backed stdin'
 fi
+
+# Antigravity blocks its agent loop on the hook and parses one JSON object off
+# stdout, so every path through the adapter has to answer, exactly once, in the
+# shape that event expects.
+antigravity_reply() {
+  printf '%s' "$2" | TMUX_AGENT_BIN=/bin/true "$root/scripts/adapters/antigravity.sh" "$1"
+}
+[[ $(antigravity_reply PreInvocation '{"conversationId":"a"}') == '{"injectSteps":[]}' ]] \
+  || fail 'Antigravity PreInvocation reply malformed'
+[[ $(antigravity_reply PostInvocation '{"conversationId":"a"}') == '{"injectSteps":[]}' ]] \
+  || fail 'Antigravity PostInvocation reply malformed'
+[[ $(antigravity_reply PostToolUse '{"conversationId":"a"}') == '{}' ]] \
+  || fail 'Antigravity PostToolUse reply malformed'
+[[ $(antigravity_reply Stop '{"conversationId":"a"}') == '{"decision":"stop"}' ]] \
+  || fail 'Antigravity Stop reply must not ask the loop to continue'
+[[ $(antigravity_reply Stop '') == '{"decision":"stop"}' ]] \
+  || fail 'Antigravity empty payload lost its reply'
+[[ $(antigravity_reply PostToolUse 'not json') == '{}' ]] \
+  || fail 'Antigravity malformed payload lost its reply'
+[[ $(antigravity_reply PostToolUse '{"conversationId":"a"}' | wc -l) == 1 ]] \
+  || fail 'Antigravity adapter answered more than once'
+# Registering a PreToolUse hook would force this adapter to return a permission
+# decision, and the only ones on offer approve or block the call.
+[[ $(<"$root/scripts/setup.sh") != *'antigravity_events=(PreToolUse'* ]] \
+  || fail 'Antigravity status hook claimed the permission decision'
+
+antigravity_probe="$tmp/antigravity-probe"
+printf '%s\n' '#!/usr/bin/env bash' \
+  'printf "%s|%s|%s\n" "$*" "$TMUX_AGENT_HARNESS" "$TMUX_AGENT_MESSAGE" >>"$ANTIGRAVITY_EVENT_LOG"' \
+  >"$antigravity_probe"
+chmod +x "$antigravity_probe"
+export ANTIGRAVITY_EVENT_LOG="$tmp/antigravity-events.log"
+: >"$ANTIGRAVITY_EVENT_LOG"
+for antigravity_case in \
+  'PreInvocation|{"conversationId":"ag-1"}' \
+  'PostToolUse|{"conversationId":"ag-1","error":"exit status 1"}' \
+  'Stop|{"conversationId":"ag-1","terminationReason":"model_stop"}' \
+  'Stop|{"conversationId":"ag-1","terminationReason":"error","error":"boom"}' \
+  'Stop|{"conversationId":"ag-1","terminationReason":"max_steps_exceeded"}'; do
+  printf '%s' "${antigravity_case#*|}" | TMUX_AGENT_BIN="$antigravity_probe" \
+    "$root/scripts/adapters/antigravity.sh" "${antigravity_case%%|*}" >/dev/null
+done
+for _ in {1..50}; do
+  [[ $(wc -l <"$ANTIGRAVITY_EVENT_LOG") -ge 5 ]] && break
+  sleep 0.05
+done
+antigravity_events_seen=$(<"$ANTIGRAVITY_EVENT_LOG")
+assert_contains "$antigravity_events_seen" 'event working PreInvocation|antigravity|'
+# A failed tool is not a failed turn: the model still gets to react to it.
+assert_contains "$antigravity_events_seen" 'event working PostToolUse|antigravity|exit status 1'
+assert_contains "$antigravity_events_seen" 'event ready Stop|antigravity|'
+assert_contains "$antigravity_events_seen" 'event turn-failed Stop|antigravity|boom'
+[[ $(grep -c 'event turn-failed Stop' <<<"$antigravity_events_seen") == 2 ]] \
+  || fail 'Antigravity exhausted turn was not reported as a failure'
+[[ $antigravity_events_seen != *'event exited'* ]] \
+  || fail 'Antigravity Stop was mistaken for process exit'
 
 snapshot="$tmp/snapshot"
 mkdir -p "$snapshot"
@@ -231,20 +290,62 @@ tmux kill-pane -t "$quiet_pane"
 [[ $(jq -r '.last_event.state' "$tmp/state/tmux-agent-manager/history/$quiet_run.json") == exited ]] \
   || fail 'silently lost pane was not archived as exited'
 
+antigravity_hooks="$tmp/home/.gemini/config/hooks.json"
+mkdir -p "$(dirname "$antigravity_hooks")"
+printf '{"lint-checker":{"PostToolUse":[{"matcher":"run_command","hooks":[{"command":"lint"}]}]}}\n' \
+  >"$antigravity_hooks"
 CLAUDE_SETTINGS_FILE="$tmp/home/.claude/settings.json" \
 CODEX_HOOKS_FILE="$tmp/home/.codex/hooks.json" \
 OPENCODE_PLUGIN_DIR="$tmp/home/.config/opencode/plugin" \
+ANTIGRAVITY_HOOKS_FILE="$antigravity_hooks" \
   "$root/bin/tmux-agent" setup --apply >/dev/null
 jq -e '.hooks.SessionStart | length == 2' "$tmp/home/.claude/settings.json" >/dev/null \
   || fail 'Claude setup replaced existing hook'
 jq -e '.hooks.StopFailure | length == 1' "$tmp/home/.claude/settings.json" >/dev/null \
   || fail 'Claude StopFailure hook absent'
+# The Antigravity file is keyed by hook name, so someone else's entry sits
+# beside ours instead of under a different event.
+jq -e '.["lint-checker"].PostToolUse[0].hooks[0].command == "lint"' "$antigravity_hooks" >/dev/null \
+  || fail 'Antigravity setup clobbered an unrelated hook'
+jq -e --arg adapter "$root/scripts/adapters/antigravity.sh" '
+  .["tmux-agent-manager"] |
+  (.PostToolUse[0].matcher == "*") and
+  (.PostToolUse[0].hooks[0].command | contains($adapter)) and
+  (.Stop[0].command | contains($adapter)) and
+  (.PreInvocation[0].command | contains($adapter)) and
+  (.PostInvocation[0].command | contains($adapter)) and
+  (has("PreToolUse") | not)
+' "$antigravity_hooks" >/dev/null || fail 'Antigravity hook shape incorrect'
+antigravity_hooks_after_setup=$(<"$antigravity_hooks")
 OPENCODE_PLUGIN_DIR="$tmp/home/.config/opencode/plugin" \
+ANTIGRAVITY_HOOKS_FILE="$antigravity_hooks" \
   "$root/bin/tmux-agent" setup --apply >/dev/null
 jq -e '.hooks.SessionStart | length == 2' "$tmp/home/.claude/settings.json" >/dev/null \
   || fail 'setup was not idempotent'
+[[ $(<"$antigravity_hooks") == "$antigravity_hooks_after_setup" ]] \
+  || fail 'Antigravity setup was not idempotent'
 [[ -L "$tmp/home/.config/opencode/plugin/tmux-agent-manager.js" ]] \
   || fail 'OpenCode adapter symlink absent'
+
+# An operator who switched the hook off keeps it off through an upgrade.
+jq '.["tmux-agent-manager"].enabled = false' "$antigravity_hooks" >"$tmp/hooks.disabled"
+mv "$tmp/hooks.disabled" "$antigravity_hooks"
+ANTIGRAVITY_HOOKS_FILE="$antigravity_hooks" \
+OPENCODE_PLUGIN_DIR="$tmp/home/.config/opencode/plugin" \
+  "$root/bin/tmux-agent" setup --apply >/dev/null
+jq -e '.["tmux-agent-manager"].enabled == false' "$antigravity_hooks" >/dev/null \
+  || fail 'Antigravity setup re-enabled a disabled hook'
+
+# A hook someone else parked under our name is a name collision, not ours to
+# overwrite.
+printf '{"tmux-agent-manager":{"Stop":[{"command":"theirs"}]}}\n' >"$tmp/hooks.collide"
+if ANTIGRAVITY_HOOKS_FILE="$tmp/hooks.collide" \
+  OPENCODE_PLUGIN_DIR="$tmp/home/.config/opencode/plugin" \
+  "$root/bin/tmux-agent" setup --apply >/dev/null 2>&1; then
+  fail 'Antigravity setup overwrote a foreign hook of the same name'
+fi
+jq -e '.["tmux-agent-manager"].Stop[0].command == "theirs"' "$tmp/hooks.collide" >/dev/null \
+  || fail 'Antigravity collision damaged the existing file'
 
 native="$tmp/native"
 mkdir -p "$native/claude/projects/project" "$native/cache"
@@ -266,16 +367,44 @@ sqlite3 "$native/opencode.db" "
   );
   INSERT INTO session VALUES ('opencode-native', 'OpenCode saved', '/tmp/opencode', 1000, NULL, NULL);
 "
+mkdir -p "$native/antigravity/conversations" "$native/antigravity/cache" "$tmp/work/ag space"
+sqlite3 "$native/antigravity/conversation_summaries.db" "
+  CREATE TABLE conversation_summaries (
+    conversation_id TEXT, title TEXT, workspace_uris TEXT,
+    last_modified_time DATETIME, killed NUMERIC
+  );
+  INSERT INTO conversation_summaries VALUES
+    ('antigravity-native', 'Antigravity saved', '[\"$tmp/work\"]', '2026-08-01 10:00:00', 0),
+    ('antigravity-uri', 'Antigravity URI', '[\"file://$tmp/work/ag%20space\"]', 4000, 0),
+    ('antigravity-remote', 'Antigravity remote', '[\"ssh://host/tmp\"]', 4000, 0),
+    ('antigravity-killed', 'Antigravity killed', '[\"$tmp/work\"]', 4000, 1);
+"
+# A conversation exists on disk before its summary row does, so the catalog has
+# to fall back to the file name and the workspace cache to stay resumable.
+touch "$native/antigravity/conversations/antigravity-native.db" \
+  "$native/antigravity/conversations/antigravity-fresh.db"
+printf '{"%s":"antigravity-fresh"}\n' "$tmp/work" \
+  >"$native/antigravity/cache/last_conversations.json"
 CLAUDE_PROJECTS_DIR="$native/claude/projects" \
 CLAUDE_HISTORY_FILE="$native/claude/history.jsonl" \
 CODEX_DB="$native/codex.db" \
 OPENCODE_DB="$native/opencode.db" \
+ANTIGRAVITY_DATA_DIR="$native/antigravity" \
 XDG_CACHE_HOME="$native/cache" \
   "$root/scripts/native-sessions.sh" refresh
 native_catalog=$(<"$native/cache/tmux-agent-manager/native-sessions.tsv")
 assert_contains "$native_catalog" 'Claude saved'
 assert_contains "$native_catalog" 'Codex saved'
 assert_contains "$native_catalog" 'OpenCode saved'
+assert_contains "$native_catalog" 'Antigravity saved'
+assert_contains "$native_catalog" "$tmp/work/ag space"
+[[ $native_catalog != *'Antigravity killed'* ]] || fail 'a killed conversation stayed in the catalog'
+# A workspace this machine cannot open would resume the conversation somewhere
+# else entirely, so it is dropped rather than guessed at.
+[[ $native_catalog != *'Antigravity remote'* ]] || fail 'a non-local workspace was accepted'
+assert_contains "$native_catalog" 'antigravity-fresh'
+[[ $(grep -c 'antigravity-native' <<<"$native_catalog") == 1 ]] \
+  || fail 'a summarised conversation was listed twice'
 
 mkdir -p "$native/bin"
 printf '%s\n' \
@@ -322,6 +451,41 @@ assert_contains "$(<"$native/resume.log")" 'opencode-native'
 resume_session=$(tmux list-sessions -F '#{session_name}' | awk '/^ai-OpenCode-saved-/ { print; exit }')
 [[ -n $resume_session ]] || fail 'native OpenCode resume did not create dedicated session'
 tmux kill-session -t "=$resume_session"
+
+# Antigravity has no alias convention, so its command is executed directly and
+# resumes by conversation ID.
+printf '%s\n' \
+  '#!/usr/bin/env bash' \
+  'printf "%s\n" "$*" >"$ANTIGRAVITY_RESUME_LOG"' \
+  'if [[ "$*" == *--conversation* ]]; then sleep 60; fi' >"$native/bin/agy"
+chmod +x "$native/bin/agy"
+# A session starts a login shell, which rebuilds PATH from the profile, so the
+# stand-in has to be named outright.
+tmux set-environment -g TMUX_AGENT_ANTIGRAVITY_COMMAND "$native/bin/agy"
+tmux set-environment -g ANTIGRAVITY_RESUME_LOG "$native/antigravity-resume.log"
+TMUX_AGENT_NO_SWITCH=1 "$root/scripts/open.sh" \
+  antigravity-native native:antigravity "$tmp/work" 4000 - 0 'Antigravity saved'
+for _ in {1..30}; do
+  [[ -f $native/antigravity-resume.log ]] && break
+  sleep 0.1
+done
+if [[ ! -f $native/antigravity-resume.log ]]; then
+  ag_debug_session=$(tmux list-sessions -F '#{session_name}' | awk '/^ai-Antigravity-saved-/ { print; exit }')
+  fail "native Antigravity resume did not start: $(tmux capture-pane -p -t "=$ag_debug_session:agent" 2>&1 | tail -5)"
+fi
+assert_contains "$(<"$native/antigravity-resume.log")" '--conversation antigravity-native'
+resume_session=$(tmux list-sessions -F '#{session_name}' | awk '/^ai-Antigravity-saved-/ { print; exit }')
+[[ -n $resume_session ]] || fail 'native Antigravity resume did not create dedicated session'
+tmux kill-session -t "=$resume_session"
+
+rm -f "$native/antigravity-resume.log"
+TMUX_AGENT_ANTIGRAVITY_COMMAND="$native/bin/agy" \
+ANTIGRAVITY_RESUME_LOG="$native/antigravity-new.log" \
+  "$root/scripts/run.sh" --thread "$(new_uuid)" --run "$(new_uuid)" \
+  --agent antigravity --label fresh
+[[ -f $native/antigravity-new.log ]] || fail 'fresh Antigravity launch did not run agy'
+[[ $(<"$native/antigravity-new.log") != *--conversation* ]] \
+  || fail 'fresh Antigravity launch tried to resume'
 "$root/bin/tmux-agent" reconcile
 
 # A merged pull request retires its run without waiting for the pane to die.

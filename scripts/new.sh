@@ -52,7 +52,7 @@ browse_directory() {
   cwd=$(resolve_directory "$resolved" "$base") || return 1
 }
 
-harness=$(printf 'claude\ncodex\nopencode\n' | pick agent 1) || exit 0
+harness=$(printf 'claude\ncodex\nopencode\nantigravity\n' | pick agent 1) || exit 0
 
 source_pane=${TMUX_AGENT_SOURCE_PANE:-${TMUX_PANE:-}}
 source_cwd=$(tmux display-message -p -t "$source_pane" '#{pane_current_path}')

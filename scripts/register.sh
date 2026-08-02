@@ -22,7 +22,7 @@ run=${run:-$(new_uuid)}
 [[ -n $harness ]] || { printf 'tmux-agent register: --harness required\n' >&2; exit 2; }
 [[ -n $pane ]] || { printf 'tmux-agent register: must run inside tmux\n' >&2; exit 1; }
 valid_id "$thread" && valid_id "$run" || { printf 'tmux-agent register: invalid ID\n' >&2; exit 2; }
-[[ $harness == claude || $harness == codex || $harness == opencode ]] \
+[[ $harness == claude || $harness == codex || $harness == opencode || $harness == antigravity ]] \
   || { printf 'tmux-agent register: unsupported harness\n' >&2; exit 2; }
 register_run "$thread" "$run" "$harness" "$label" "$managed" "$pane"
 append_event "$run" starting registered '' ''

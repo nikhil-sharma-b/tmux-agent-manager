@@ -10,6 +10,34 @@ claude_projects=${CLAUDE_PROJECTS_DIR:-$HOME/.claude/projects}
 claude_history=${CLAUDE_HISTORY_FILE:-$HOME/.claude/history.jsonl}
 codex_db=${CODEX_DB:-$HOME/.codex/state_5.sqlite}
 opencode_db=${OPENCODE_DB:-${XDG_DATA_HOME:-$HOME/.local/share}/opencode/opencode.db}
+antigravity_dir=${ANTIGRAVITY_DATA_DIR:-$HOME/.gemini/antigravity-cli}
+antigravity_db=${ANTIGRAVITY_SUMMARIES_DB:-$antigravity_dir/conversation_summaries.db}
+antigravity_conversations=${ANTIGRAVITY_CONVERSATIONS_DIR:-$antigravity_dir/conversations}
+antigravity_workspaces=${ANTIGRAVITY_LAST_CONVERSATIONS_FILE:-$antigravity_dir/cache/last_conversations.json}
+
+# Antigravity records a workspace as a JSON array, a bare string, a path, or a
+# file:// URI depending on where the row came from. Anything that is not a
+# local path is dropped rather than guessed at: a wrong path would resume the
+# conversation in the wrong directory.
+antigravity_path() {
+  local value=$1
+  [[ -n $value ]] || return 0
+  case $value in
+    file://localhost/*) value=/${value#file://localhost/} ;;
+    file:///*) value=/${value#file:///} ;;
+    file://*) return 0 ;;
+    /*) ;;
+    *) return 0 ;;
+  esac
+  # Percent-decoding is what turns a URI back into a directory name that has a
+  # space in it.
+  if [[ $value == *%* ]]; then
+    local decoded
+    decoded=$(printf '%b' "${value//%/\\x}" 2>/dev/null) || return 0
+    value=$decoded
+  fi
+  printf '%s' "$value"
+}
 
 emit_row() {
   local harness=$1 id=$2 title=$3 cwd=$4 updated=$5 state
@@ -105,6 +133,62 @@ refresh() {
       WHERE parent_id IS NULL AND time_archived IS NULL
       ORDER BY time_updated DESC
     " | jq -r '.[] | [.id,(.title // "-"),(.cwd // ""),(.updated // 0)]|@tsv')
+  fi
+
+  # Antigravity writes its summary rows lazily, so a conversation can exist on
+  # disk for a while with no row to describe it. Both sources are read and the
+  # summaries win, which keeps a fresh conversation resumable under a generic
+  # name instead of missing until the summary lands.
+  declare -A antigravity_seen=() antigravity_cwds=()
+  if [[ -f $antigravity_db ]] && command -v sqlite3 >/dev/null 2>&1; then
+    while IFS=$'\t' read -r id title cwd updated; do
+      [[ -n $id ]] || continue
+      cwd=$(antigravity_path "$cwd")
+      [[ -n $cwd ]] || continue
+      antigravity_seen[$id]=1
+      [[ -n $title && $title != - ]] || title=${cwd##*/}
+      emit_row antigravity "$id" "$title" "$cwd" "$updated" >>"$tmp"
+    done < <(sqlite3 -readonly -json "$antigravity_db" "
+      SELECT conversation_id AS id, COALESCE(NULLIF(title, ''), '-') AS title,
+        workspace_uris AS workspaces,
+        CASE
+          WHEN typeof(last_modified_time) IN ('integer','real') THEN
+            CASE WHEN last_modified_time > 100000000000
+              THEN CAST(last_modified_time AS INTEGER)
+              ELSE CAST(last_modified_time AS INTEGER) * 1000 END
+          ELSE COALESCE(CAST(strftime('%s', last_modified_time) AS INTEGER), 0) * 1000
+        END AS updated
+      FROM conversation_summaries
+      WHERE COALESCE(killed, 0) = 0
+      ORDER BY updated DESC
+    " 2>/dev/null | jq -r '.[]? |
+      [.id,
+       (.title // "-"),
+       ((.workspaces // "") | (fromjson? // .) |
+         if type == "array" then (.[0] // "") else . end | tostring),
+       (.updated // 0)]|@tsv' 2>/dev/null || true)
+  fi
+
+  if [[ -d $antigravity_conversations ]]; then
+    # The only record of which directory a conversation belongs to, for rows the
+    # summary database has not caught up with yet. Undocumented, so a missing or
+    # reshaped file just costs the fallback its cwd.
+    if [[ -f $antigravity_workspaces ]]; then
+      while IFS=$'\t' read -r id cwd; do
+        [[ -n $id && -n $cwd ]] && antigravity_cwds[$id]=$cwd
+      done < <(jq -r 'to_entries[]? | select(.value != null) |
+        [(.value|tostring), .key]|@tsv' "$antigravity_workspaces" 2>/dev/null || true)
+    fi
+    for file in "$antigravity_conversations"/*.db; do
+      [[ -f $file ]] || continue
+      id=${file##*/}
+      id=${id%.db}
+      [[ -n ${antigravity_seen[$id]:-} ]] && continue
+      cwd=$(antigravity_path "${antigravity_cwds[$id]:-}")
+      [[ -n $cwd ]] || cwd=$HOME
+      updated=$(stat -c %Y "$file" 2>/dev/null || printf '0')
+      emit_row antigravity "$id" "${cwd##*/}" "$cwd" "$((updated * 1000))" >>"$tmp"
+    done
   fi
 
   # Written through a rename so an interrupted refresh cannot leave readers

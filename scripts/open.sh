@@ -11,7 +11,7 @@ if [[ $kind == native:* ]]; then
   native_id=$run
   cwd=${3:?native cwd required}
   label=${7:-${cwd##*/}}
-  [[ $harness == claude || $harness == codex || $harness == opencode ]] || exit 1
+  [[ $harness == claude || $harness == codex || $harness == opencode || $harness == antigravity ]] || exit 1
   [[ $native_id =~ ^[[:alnum:]_.:-]+$ ]] || exit 1
   [[ -d $cwd ]] || cwd=$HOME
   thread=$(new_uuid)
