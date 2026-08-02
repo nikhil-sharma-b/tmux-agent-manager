@@ -48,6 +48,7 @@ Sidebar controls. Press `?` in the sidebar for this list in the pane:
 - `s`: toggle native Claude, Codex, and OpenCode sessions
 - `/`, `f`, or `o`: fuzzy search the current live, history, or saved view in the sidebar pane
 - `r`: rename the selected managed session
+- `x`: stop the selected managed session
 - `R`: refresh
 - `q`: hide sidebar
 
@@ -72,7 +73,8 @@ Details are cut to the available width rather than wrapped, and repeated events 
 - `! attention`: permission, user decision, or recoverable turn failure
 - `◆ ready`: completed result not yet viewed
 - `? stale`: working event received no update within the configured threshold
-- `× crashed`: harness process exited unsuccessfully
+- `× crashed`: harness process exited unsuccessfully. The pane is held open so
+  the error stays readable; closing it archives the run as `crashed`
 - `cancelled`: harness process was interrupted and moved to history
 - `merged`: the run's pull request merged, so the run moved to history
 

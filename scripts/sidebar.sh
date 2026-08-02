@@ -47,12 +47,15 @@ create_agent() {
     -e "TMUX_AGENT_SOURCE_PANE=$target" "$script_dir/new.sh"
 }
 
-rename_selected() {
+# Rename and stop only mean anything for a run this server is tracking; the
+# saved-session and history scopes have nothing to act on.
+prompt_for_selected() {
+  local action=$1 run kind
   ((count > 0)) || return
   IFS=$'\t' read -r run kind _ <<<"${rows[$selected]}"
-  [[ $kind != native:* ]] || return
+  [[ $kind == live ]] || return
   printf '\033[?25h'
-  "$script_dir/rename.sh" "$run" || true
+  "$script_dir/$action.sh" "$run" || true
   printf '\033[?25l'
   force_redraw=1
 }
@@ -133,6 +136,7 @@ render_help() {
   help_row 'h' 'history'
   help_row 's' 'saved sessions'
   help_row 'r' 'rename agent'
+  help_row 'x' 'stop agent'
   help_row 'R' 'refresh'
   help_row 'q' 'hide sidebar'
   printf '\033[J\033[%d;1H\033[90m%s\033[0m\033[K\n \033[90many key closes\033[0m\033[K' \
@@ -269,7 +273,8 @@ while true; do
         /|f|o) open_finder; break ;;
         '?') show_help=1; force_redraw=1; break ;;
         q) "$script_dir/sidebar-toggle.sh" hide "$TMUX_PANE" "${TMUX_AGENT_CLIENT:-}"; exit 0 ;;
-        r) rename_selected; break ;;
+        r) prompt_for_selected rename; break ;;
+        x) prompt_for_selected stop; break ;;
         R) force_redraw=1; break ;;
       esac
     fi

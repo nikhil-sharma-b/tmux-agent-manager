@@ -17,13 +17,18 @@ if [[ $mode == history ]]; then
   ensure_state_dirs
   for entry in "$(history_root)"/*.json; do
     [[ -f $entry ]] || continue
+    # How a run ended is the thing you look for in history, so it goes in the
+    # state column instead of the constant "history". The sort key is an
+    # inverted end time, which lands the most recent work at the top.
     jq -r --arg dim "$dim" --arg reset "$reset" '
       def clean: gsub("[\\t\\r\\n]";" ");
       def fit: (if length > 26 then .[0:25] + "…" else . end)
         | (if length < 26 then . + (" " * (26 - length)) else . end);
-      [.run_id,"history","-","-","-","0","9",(.label|clean),"history",
+      (.last_event.state // "exited") as $state |
+      [.run_id,"history","-","-","-","0",
+      ((9999999999 - (.ended_at // 0))|tostring),(.label|clean),$state,
       ($dim + "·" + $reset + " " + (.label|clean|fit)),
-      ($dim + ([.harness,((.branch // "")|clean),(.ended_at|todate|.[0:10])]
+      ($dim + ([$state,.harness,((.branch // "")|clean),(.ended_at|todate|.[0:10])]
         | map(select(. != "")) | join(" · ")) + $reset)]|@tsv' "$entry" >>"$list_tmp"
   done
 else

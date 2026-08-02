@@ -16,18 +16,25 @@ pick() {
     --color='fg:-1,bg:-1,hl:4,fg+:4:bold,bg+:-1,hl+:12,info:8,prompt:8,pointer:4,header:8,gutter:8'
 }
 
+# The error stays on the retry screen: a message that flashes for a moment and
+# is then wiped by the redraw reads as the prompt resetting for no reason.
 prompt_directory() {
-  local base=$1 path resolved
+  local base=$1 path resolved error=''
   while true; do
-    printf '\033[2J\033[H\n  \033[1mdirectory path\033[0m  \033[90mrelative to %s · empty cancels\033[0m\n\n  › ' "$base" >&2
+    printf '\033[2J\033[H\n  \033[1mdirectory path\033[0m  \033[90mrelative to %s · empty cancels\033[0m\n' \
+      "${base/#$HOME/\~}" >&2
+    if [[ -n $error ]]; then
+      printf '\n  \033[31m%s\033[0m\n\n  › ' "$error" >&2
+    else
+      printf '\n  › ' >&2
+    fi
     IFS= read -r path || return 1
     [[ -n $path ]] || return 1
     if resolved=$(resolve_directory "$path" "$base"); then
       cwd=$resolved
       return
     fi
-    printf '\n\n  \033[31mnot a directory: %s\033[0m\n' "$path" >&2
-    sleep 1
+    error="not a directory: $path"
   done
 }
 
@@ -41,7 +48,8 @@ browse_directory() {
   fi
   IFS= read -r resolved <"$cwd_file" || resolved=''
   rm -f "$cwd_file"
-  cwd=$(resolve_directory "$resolved" "$base")
+  # Quitting yazi without a directory cancels rather than aborting the wizard.
+  cwd=$(resolve_directory "$resolved" "$base") || return 1
 }
 
 harness=$(printf 'claude\ncodex\nopencode\n' | pick agent 1) || exit 0

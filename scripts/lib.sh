@@ -180,6 +180,15 @@ register_run() {
   ensure_state_dirs
   valid_id "$thread" && valid_id "$run" || return 1
   dir=$(run_dir "$run")
+  # Read the pane before reserving the directory: a pane that already went away
+  # would otherwise leave an unusable run directory behind. tmux exits 0 with
+  # empty output for a stale target, so the fields are what decide this.
+  metadata=$(pane_metadata "$pane" 2>/dev/null || true)
+  IFS=$'\t' read -r pane_id window_id session_id cwd <<<"$metadata"
+  [[ $pane_id =~ ^%[0-9]+$ && $window_id =~ ^@[0-9]+$ && -n $cwd ]] || {
+    printf 'tmux-agent-manager: pane %s no longer exists\n' "$pane" >&2
+    return 1
+  }
   [[ ! -e $dir ]] || {
     printf 'tmux-agent-manager: run already exists: %s\n' "$run" >&2
     return 1
@@ -190,11 +199,6 @@ register_run() {
   }
   chmod 700 "$dir"
 
-  metadata=$(pane_metadata "$pane") || {
-    printf 'tmux-agent-manager: pane %s no longer exists\n' "$pane" >&2
-    return 1
-  }
-  IFS=$'\t' read -r pane_id window_id session_id cwd <<<"$metadata"
   if git -C "$cwd" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
     repo=$(git -C "$cwd" rev-parse --show-toplevel 2>/dev/null || true)
     branch=$(git -C "$cwd" symbolic-ref --short HEAD 2>/dev/null || true)
@@ -285,8 +289,8 @@ append_event() {
   flock -u 9
   exec 9>&-
 
-  tmux set-option -p -t "$(jq -r '.pane_id' "$dir/meta.json")" \
-    @agent-manager-state "$state" 2>/dev/null || true
+  # $pane was read under the lock; the run may already be archived by now.
+  tmux set-option -p -t "$pane" @agent-manager-state "$state" 2>/dev/null || true
   rebuild_cache
 }
 
@@ -436,8 +440,10 @@ merge_watch() {
   ("$plugin_dir/bin/tmux-agent" check-merges >/dev/null 2>&1 &) 2>/dev/null || true
 }
 
+# A run that already reported how it ended keeps that verdict. Only a run whose
+# pane disappeared without a word is recorded as a plain exit.
 reconcile_runs() {
-  local dir run pane expected snapshot line
+  local dir run pane expected snapshot recorded
   declare -A live_runs=()
   ensure_state_dirs
   merge_watch
@@ -451,15 +457,24 @@ reconcile_runs() {
     pane=$(jq -r '.pane_id' "$dir/meta.json")
     expected=$(jq -r '.run_id' "$dir/meta.json")
     if [[ ${live_runs[$pane]:-} != "$expected" ]]; then
-      append_event "$run" exited pane-gone '' 'pane no longer exists' 2>/dev/null || true
-      archive_run "$run" exited
+      recorded=$(jq -r '.state' <<<"$(latest_event "$dir/events.jsonl")")
+      case $recorded in
+        crashed|cancelled|merged) archive_run "$run" ;;
+        *)
+          append_event "$run" exited pane-gone '' 'pane no longer exists' 2>/dev/null || true
+          archive_run "$run" exited
+          ;;
+      esac
     fi
   done
   rebuild_cache
 }
 
+# A window mark shows the most urgent run in that window. A dead harness is the
+# most urgent thing there is, so it outranks work that is merely waiting.
 state_rank() {
   case $1 in
+    crashed) printf '7' ;;
     attention|turn-failed) printf '6' ;;
     ready) printf '5' ;;
     working) printf '4' ;;

@@ -15,7 +15,8 @@ if [[ -n $requested_mode ]]; then
   printf '%s\n' "$requested_mode" >"$mode_file"
 fi
 
-mode=$(<"$mode_file")
+mode=live
+[[ -f $mode_file ]] && mode=$(<"$mode_file")
 if [[ $mode == sessions ]]; then
   "$script_dir/native-sessions.sh" collect "$snapshot_dir"
 else

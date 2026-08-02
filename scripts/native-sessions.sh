@@ -13,6 +13,8 @@ opencode_db=${OPENCODE_DB:-${XDG_DATA_HOME:-$HOME/.local/share}/opencode/opencod
 
 emit_row() {
   local harness=$1 id=$2 title=$3 cwd=$4 updated=$5 state
+  # A stray tab or newline in an ID would shift every later column of the row.
+  [[ $id =~ ^[[:alnum:]_.:-]+$ ]] || return 0
   title=$(clean_text "$title")
   cwd=$(clean_text "$cwd")
   state="$harness · saved"
