@@ -52,14 +52,18 @@ if [[ $kind == native:* ]]; then
 fi
 
 valid_id "$run" || exit 1
-if [[ $kind == history ]]; then
+if [[ $kind == history || $kind == history-only ]]; then
   file="$(history_root)/$run.json"
   [[ -f $file ]] || exit 0
-  IFS=$'\t' read -r label harness branch cwd state ended < <(jq -r '
-    [.label,.harness,(.branch // "-"),.cwd,(.last_event.state // "unknown"),
-     (.ended_at|todate)]|@tsv' "$file")
+  # A run outside a repository has an empty branch, which a tab-separated read
+  # would drop, shifting the path and state into the wrong fields.
+  mapfile -t fields < <(jq -r '
+    .label, .harness, (if (.branch // "") == "" then "-" else .branch end),
+    .cwd, (.last_event.state // "unknown"), (.ended_at|todate)' "$file")
+  label=${fields[0]:-} harness=${fields[1]:-} branch=${fields[2]:--}
+  cwd=${fields[3]:-} state=${fields[4]:-unknown} ended=${fields[5]:-}
   title "$label"
-  subtitle "$harness · $state · history"
+  subtitle "$harness · $state · no resume"
   field branch "${branch:--}"
   field path "$(tail_text "$cwd")"
   field ended "$ended"

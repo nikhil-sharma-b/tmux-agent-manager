@@ -36,6 +36,13 @@ export XDG_RUNTIME_DIR="$tmp/runtime"
 export XDG_STATE_HOME="$tmp/state"
 export HOME="$tmp/home"
 
+# Anything the test server spawns inherits the server's environment, not this
+# shell's. Without these the suite writes its runs into the real runtime
+# directory instead of the temporary one.
+tmux set-environment -g XDG_RUNTIME_DIR "$XDG_RUNTIME_DIR"
+tmux set-environment -g XDG_STATE_HOME "$XDG_STATE_HOME"
+tmux set-environment -g HOME "$HOME"
+
 source "$root/scripts/lib.sh"
 [[ $(truncate_text 'short label' 20) == 'short label' ]] || fail 'short label was truncated'
 [[ $(truncate_text 'long agent session label' 12) == 'long agent…' ]] || fail 'long label ellipsis incorrect'
@@ -89,6 +96,13 @@ TMUX_AGENT_NO_SWITCH=1 create_agent_session "$dedicated_session" "$tmp/work" 'Re
 tmux has-session -t "=$dedicated_session" || fail 'dedicated agent session not created'
 [[ $(tmux list-panes -t "=$dedicated_session" -F '#{pane_id}' | wc -l) == 1 ]] \
   || fail 'dedicated agent session should start with one pane'
+
+# tmux exits 0 with empty output for a stale pane target, so registering against
+# one must be rejected on the fields rather than on the exit status.
+stale_run=$(new_uuid)
+register_run "$(new_uuid)" "$stale_run" claude stale true '%99999' 2>/dev/null \
+  && fail 'registration accepted a pane that does not exist'
+[[ ! -e $(run_dir "$stale_run") ]] || fail 'rejected registration left a run directory'
 
 registration=$("$root/bin/tmux-agent" register --harness claude --label 'fix auth' --pane "$pane")
 IFS=$'\t' read -r thread run <<<"$registration"
@@ -165,6 +179,42 @@ printf '{"session_id":"direct-1"}\n' | "$root/scripts/adapters/claude.sh" Sessio
 list=$("$root/scripts/collect.sh" "$snapshot" live)
 [[ $list != *"$direct_pane"* ]] || fail 'duplicate SessionEnd re-registered run'
 
+# A harness that reported how it failed keeps that verdict through archiving;
+# only a run that vanished without a word is recorded as a plain exit.
+crash_pane=$(tmux split-window -d -P -F '#{pane_id}' -t test -c "$tmp/work" 'sleep 60')
+crash_registration=$("$root/bin/tmux-agent" register --harness claude --label crashy --pane "$crash_pane")
+IFS=$'\t' read -r _ crash_run <<<"$crash_registration"
+append_event "$crash_run" crashed process-exit '' 'process exited with status 42'
+list=$("$root/scripts/collect.sh" "$snapshot" live)
+assert_contains "$list" $'\tcrashed\t'
+tmux kill-pane -t "$crash_pane"
+"$root/bin/tmux-agent" reconcile
+[[ $(jq -r '.last_event.state' "$tmp/state/tmux-agent-manager/history/$crash_run.json") == crashed ]] \
+  || fail 'archived crash was overwritten with a plain exit'
+[[ $(jq -r '.last_event.message' "$tmp/state/tmux-agent-manager/history/$crash_run.json") \
+  == 'process exited with status 42' ]] || fail 'archived crash lost its message'
+
+# A dead harness is the most urgent thing in its window, so it must win the mark.
+mark_window=$(tmux new-window -d -P -F '#{window_id}' -t test 'sleep 60')
+mark_a=$(tmux list-panes -t "$mark_window" -F '#{pane_id}')
+mark_b=$(tmux split-window -d -P -F '#{pane_id}' -t "$mark_a" 'sleep 60')
+IFS=$'\t' read -r _ mark_run_a <<<"$("$root/bin/tmux-agent" register --harness claude --label boom --pane "$mark_a")"
+IFS=$'\t' read -r _ mark_run_b <<<"$("$root/bin/tmux-agent" register --harness claude --label busy --pane "$mark_b")"
+append_event "$mark_run_a" crashed process-exit '' 'died'
+append_event "$mark_run_b" working tool-use '' ''
+rebuild_cache
+assert_contains "$(tmux show-option -wqv -t "$mark_window" @agent-manager-window-mark)" 'red'
+tmux kill-window -t "$mark_window"
+
+# A run that simply lost its pane still archives as exited.
+quiet_pane=$(tmux split-window -d -P -F '#{pane_id}' -t test -c "$tmp/work" 'sleep 60')
+quiet_registration=$("$root/bin/tmux-agent" register --harness claude --label quiet --pane "$quiet_pane")
+IFS=$'\t' read -r _ quiet_run <<<"$quiet_registration"
+tmux kill-pane -t "$quiet_pane"
+"$root/bin/tmux-agent" reconcile
+[[ $(jq -r '.last_event.state' "$tmp/state/tmux-agent-manager/history/$quiet_run.json") == exited ]] \
+  || fail 'silently lost pane was not archived as exited'
+
 CLAUDE_SETTINGS_FILE="$tmp/home/.claude/settings.json" \
 CODEX_HOOKS_FILE="$tmp/home/.codex/hooks.json" \
 OPENCODE_PLUGIN_DIR="$tmp/home/.config/opencode/plugin" \
@@ -216,7 +266,7 @@ printf '%s\n' \
   '#!/usr/bin/env bash' \
   'if [[ $2 == test* ]]; then exit 0; fi' \
   'printf "%s\n" "$2" >"$NATIVE_RESUME_LOG"' \
-  '[[ $2 == *--resume* || $2 == *--session* ]] && sleep 60' >"$native/bin/fish"
+  'if [[ $2 == *--resume* || $2 == *--session* ]]; then sleep 60; fi' >"$native/bin/fish"
 chmod +x "$native/bin/fish"
 TMUX_AGENT_SHELL="$native/bin/fish" NATIVE_RESUME_LOG="$native/new.log" \
   "$root/scripts/run.sh" --thread "$(new_uuid)" --run "$(new_uuid)" \
@@ -325,15 +375,35 @@ finder_snapshot="$tmp/finder"
 mkdir -p "$finder_snapshot"
 finder_live=$("$root/scripts/finder-collect.sh" "$finder_snapshot" live)
 assert_contains "$finder_live" 'nav-a'
-finder_history=$("$root/scripts/finder-collect.sh" "$finder_snapshot" history)
-assert_contains "$finder_history" 'fix auth'
-finder_saved=$(XDG_CACHE_HOME="$native/cache" \
-  "$root/scripts/finder-collect.sh" "$finder_snapshot" sessions)
-assert_contains "$finder_saved" 'Claude saved'
-finder_saved=$(XDG_CACHE_HOME="$native/cache" \
+# Ended runs and the harnesses' own conversations share one saved scope, so the
+# old history and sessions names must land there too.
+saved_rows=$(XDG_CACHE_HOME="$native/cache" \
+  "$root/scripts/finder-collect.sh" "$finder_snapshot" saved)
+assert_contains "$saved_rows" 'Claude saved'
+assert_contains "$saved_rows" 'OpenCode saved'
+assert_contains "$saved_rows" 'fix auth'
+[[ $(<"$finder_snapshot/mode") == saved ]] || fail 'saved scope was not persisted'
+XDG_CACHE_HOME="$native/cache" \
+  "$root/scripts/finder-collect.sh" "$finder_snapshot" history >/dev/null
+[[ $(<"$finder_snapshot/mode") == saved ]] || fail 'the history scope did not map to saved'
+XDG_CACHE_HOME="$native/cache" \
+  "$root/scripts/finder-collect.sh" "$finder_snapshot" sessions >/dev/null
+[[ $(<"$finder_snapshot/mode") == saved ]] || fail 'the sessions scope did not map to saved'
+saved_rows=$(XDG_CACHE_HOME="$native/cache" \
   "$root/scripts/finder-collect.sh" "$finder_snapshot")
-assert_contains "$finder_saved" 'OpenCode saved'
-[[ $(<"$finder_snapshot/mode") == sessions ]] || fail 'finder refresh lost current scope'
+[[ $(awk -F '\t' '{print NF}' <<<"$saved_rows" | sort -u) == 11 ]] \
+  || fail 'saved rows broke the eleven-field row contract'
+# How a run ended survives into the merged list, and the newest work leads.
+assert_contains "$saved_rows" $'\tcrashed\t'
+newest=$(jq -r '.ended_at' "$tmp/state/tmux-agent-manager/history"/*.json | sort -rn | head -n 1)
+[[ $(head -n 1 <<<"$saved_rows" | cut -f4) -ge $newest ]] \
+  || fail 'saved list is not ordered newest first'
+# A run whose conversation the harness never recorded still opens.
+assert_contains "$saved_rows" 'history-only'
+orphan_row=$(grep -m1 $'\thistory-only\t' <<<"$saved_rows")
+[[ -n $(cut -f3 <<<"$orphan_row") ]] || fail 'a non-resumable row lost its directory'
+[[ -z $("$root/scripts/collect.sh" "$snapshot" history) ]] \
+  || fail 'collect.sh still builds a separate history list'
 tmux set-environment -g XDG_RUNTIME_DIR "$XDG_RUNTIME_DIR"
 tmux set-environment -g XDG_STATE_HOME "$XDG_STATE_HOME"
 tmux set-environment -g XDG_CACHE_HOME "$native/cache"
@@ -379,7 +449,8 @@ for _ in {1..50}; do
 done
 [[ $selected_run == "$nav_a_run" ]] || fail 'sidebar k navigation failed'
 tmux display-message -p -t "$sidebar" '#{pane_id}' >/dev/null || fail 'sidebar exited during navigation'
-assert_contains "$(<"$root/scripts/sidebar.sh")" 'r) rename_selected; break ;;'
+assert_contains "$(<"$root/scripts/sidebar.sh")" 'r) prompt_for_selected rename; break ;;'
+assert_contains "$(<"$root/scripts/sidebar.sh")" 'x) prompt_for_selected stop; break ;;'
 assert_contains "$(<"$root/scripts/sidebar.sh")" 'R) force_redraw=1; break ;;'
 sidebar_source=$(<"$root/scripts/sidebar.sh")
 [[ $sidebar_source != *'\033[2J'* ]] || fail 'sidebar redraw clears pane before rendering'
@@ -412,19 +483,44 @@ tmux display-message -p -t "$replacement" '#{pane_id}' >/dev/null || fail 'reope
 tmux send-keys -t "$replacement" s
 for _ in {1..50}; do
   mode=$(tmux show-option -gqv @agent-manager-sidebar-mode)
-  [[ $mode == sessions ]] && break
+  [[ $mode == saved ]] && break
   sleep 0.01
 done
-[[ $mode == sessions ]] || fail 'sidebar did not persist sessions mode'
+[[ $mode == saved ]] || fail 'sidebar did not persist saved mode'
 "$root/scripts/sidebar-toggle.sh" toggle "$target" ''
 "$root/scripts/sidebar-toggle.sh" toggle "$target" ''
 replacement=$(tmux show-option -gqv @agent-manager-sidebar-pane)
 for _ in {1..50}; do
   mode=$(tmux show-option -pqv -t "$replacement" @agent-manager-sidebar-mode)
-  [[ $mode == sessions ]] && break
+  [[ $mode == saved ]] && break
   sleep 0.01
 done
-[[ $mode == sessions ]] || fail 'sidebar did not restore sessions mode'
+[[ $mode == saved ]] || fail 'sidebar did not restore the saved mode'
+# A prompt appended to the drawn frame wraps through the footer and scrolls the
+# header away, so rename and stop must own the screen while they ask.
+tmux send-keys -t "$replacement" s
+for _ in {1..50}; do
+  mode=$(tmux show-option -gqv @agent-manager-sidebar-mode)
+  [[ $mode == live ]] && break
+  sleep 0.01
+done
+tmux send-keys -t "$replacement" r
+prompt_screen=''
+for _ in {1..100}; do
+  prompt_screen=$(tmux capture-pane -p -t "$replacement" 2>/dev/null || true)
+  [[ $prompt_screen == *rename* ]] && break
+  sleep 0.02
+done
+assert_contains "$prompt_screen" 'rename'
+[[ $prompt_screen != *'open · n new'* ]] || fail 'rename prompt drew over the sidebar footer'
+[[ $prompt_screen != *'AI agents'* ]] || fail 'rename prompt left the sidebar frame on screen'
+tmux send-keys -t "$replacement" Enter
+for _ in {1..100}; do
+  sidebar_screen=$(tmux capture-pane -p -t "$replacement" 2>/dev/null || true)
+  [[ $sidebar_screen == *'AI agents'* ]] && break
+  sleep 0.02
+done
+assert_contains "$sidebar_screen" 'AI agents'
 tmux send-keys -t "$replacement" /
 for _ in {1..100}; do
   finder_screen=$(tmux capture-pane -p -t "$replacement" 2>/dev/null || true)

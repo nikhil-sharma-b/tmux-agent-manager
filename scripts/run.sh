@@ -78,5 +78,13 @@ elif [[ $status -eq 130 || $status -eq 143 ]]; then
   rebuild_cache
 else
   append_event "$run" crashed process-exit '' "process exited with status $status" || true
+  # The session dies with this process, taking the harness's error message with
+  # it. Hold the pane so the failure is readable and the run shows as crashed.
+  if [[ -t 0 && -t 1 ]]; then
+    printf '\n\033[31m%s exited with status %s\033[0m\n\033[90mpress any key to close this pane\033[0m' \
+      "$harness" "$status"
+    IFS= read -rsn1 -t 3600 || true
+    printf '\n'
+  fi
 fi
 exit "$status"

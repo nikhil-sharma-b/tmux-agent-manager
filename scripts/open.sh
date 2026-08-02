@@ -28,12 +28,15 @@ if [[ $kind == live ]]; then
     "${4:?window ID required}" "${5:?pane ID required}" "${6:?event offset required}"
 fi
 
+# An archived run whose conversation the harness no longer offers still opens:
+# a fresh agent in the directory the work happened in, with nothing resumed.
 file="$(history_root)/$run.json"
 [[ -f $file ]] || exit 1
 thread=$(jq -r '.thread_id' "$file")
 harness=$(jq -r '.harness' "$file")
 label=$(jq -r '.label' "$file")
 cwd=$(jq -r '.cwd' "$file")
+[[ -d $cwd ]] || cwd=$HOME
 native_id=$(jq -r '.native_ids[-1] // ""' "$file")
 [[ $native_id =~ ^[[:alnum:]_.:-]+$ ]] || native_id=''
 new_run=$(new_uuid)

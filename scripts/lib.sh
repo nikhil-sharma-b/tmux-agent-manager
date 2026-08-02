@@ -99,6 +99,69 @@ resolve_directory() {
   (cd -P -- "$path" 2>/dev/null && pwd -P)
 }
 
+# A run is named before the harness has anything to say about it. The branch is
+# the most specific thing known at that point; the directory is the fallback.
+default_run_label() {
+  local cwd=$1 branch=''
+  if git -C "$cwd" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    branch=$(git -C "$cwd" symbolic-ref --short HEAD 2>/dev/null || true)
+  fi
+  printf '%s' "${branch:-${cwd##*/}}"
+}
+
+native_cache_file() {
+  printf '%s/tmux-agent-manager/native-sessions.tsv' "${XDG_CACHE_HOME:-$HOME/.cache}"
+}
+
+# Reading a title is a scan of one cached line; only building that cache is
+# expensive, which is why this never triggers a refresh itself.
+saved_title_for() {
+  local harness=$1 id=$2 cache
+  cache=$(native_cache_file)
+  [[ -n $id && -f $cache ]] || return 1
+  awk -F '\t' -v id="$id" -v kind="native:$harness" \
+    '$1 == id && $2 == kind && $8 != "" { print $8; found = 1; exit }
+     END { exit !found }' "$cache"
+}
+
+# The harness writes its own title only after a turn completes, so adoption is
+# retried until it lands. A label the user chose is pinned and never replaced.
+adopt_saved_title() {
+  local run=$1 dir harness native title tmp
+  dir=$(run_dir "$run") || return 0
+  [[ -f $dir/meta.json ]] || return 0
+  IFS=$'\t' read -r harness native < <(jq -r \
+    '[.harness,((.native_ids // [])|last // "")]|@tsv' "$dir/meta.json")
+  [[ -n $native ]] || return 0
+  title=$(saved_title_for "$harness" "$native") || return 0
+  [[ -n $title ]] || return 0
+  { exec 9>"$dir/.lock"; } 2>/dev/null || return 0
+  flock 9
+  if [[ -f $dir/meta.json ]]; then
+    tmp="$dir/meta.json.tmp.$$"
+    jq --arg title "$(clean_text "$title")" --arg id "$native" \
+      'if (.label_pinned // false) then . else
+         .label = $title | .adopted_title = $title | .adopted_title_native_id = $id end' \
+      "$dir/meta.json" >"$tmp" && chmod 600 "$tmp" && mv "$tmp" "$dir/meta.json"
+  fi
+  flock -u 9
+  exec 9>&-
+}
+
+# Rebuilding the catalog costs about a second, so it happens in the background
+# and no more often than the cache TTL that already governs it.
+native_catalog_watch() {
+  local ttl cache now modified
+  ttl=$(agent_option '@agent-manager-native-cache-seconds' '60')
+  [[ $ttl =~ ^[0-9]+$ ]] || ttl=60
+  ((ttl > 0)) || return 0
+  cache=$(native_cache_file)
+  now=$(date +%s)
+  modified=$(stat -c %Y "$cache" 2>/dev/null || printf '0')
+  ((now - modified >= ttl)) || return 0
+  ("$plugin_dir/scripts/native-sessions.sh" refresh >/dev/null 2>&1 &) 2>/dev/null || true
+}
+
 agent_session_name() {
   local label=$1 run=$2 name
   name=$(printf '%s' "$label" | tr ' /.:@' '------' | tr -cd '[:alnum:]_-')
@@ -174,12 +237,21 @@ pane_metadata() {
 }
 
 register_run() {
-  local thread=$1 run=$2 harness=$3 label=$4 managed=$5 pane=$6
+  local thread=$1 run=$2 harness=$3 label=$4 managed=$5 pane=$6 pinned=${7:-false}
   local dir metadata pane_id window_id session_id cwd repo='' branch='' now tmp
 
   ensure_state_dirs
   valid_id "$thread" && valid_id "$run" || return 1
   dir=$(run_dir "$run")
+  # Read the pane before reserving the directory: a pane that already went away
+  # would otherwise leave an unusable run directory behind. tmux exits 0 with
+  # empty output for a stale target, so the fields are what decide this.
+  metadata=$(pane_metadata "$pane" 2>/dev/null || true)
+  IFS=$'\t' read -r pane_id window_id session_id cwd <<<"$metadata"
+  [[ $pane_id =~ ^%[0-9]+$ && $window_id =~ ^@[0-9]+$ && -n $cwd ]] || {
+    printf 'tmux-agent-manager: pane %s no longer exists\n' "$pane" >&2
+    return 1
+  }
   [[ ! -e $dir ]] || {
     printf 'tmux-agent-manager: run already exists: %s\n' "$run" >&2
     return 1
@@ -190,17 +262,15 @@ register_run() {
   }
   chmod 700 "$dir"
 
-  metadata=$(pane_metadata "$pane") || {
-    printf 'tmux-agent-manager: pane %s no longer exists\n' "$pane" >&2
-    return 1
-  }
-  IFS=$'\t' read -r pane_id window_id session_id cwd <<<"$metadata"
   if git -C "$cwd" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
     repo=$(git -C "$cwd" rev-parse --show-toplevel 2>/dev/null || true)
     branch=$(git -C "$cwd" symbolic-ref --short HEAD 2>/dev/null || true)
   fi
   now=$(date +%s)
-  label=$(clean_text "${label:-${cwd##*/}}")
+  # An unnamed run stands in with its branch or directory until the harness
+  # produces a real title; a name the caller supplied is pinned against that.
+  [[ -n $label ]] || pinned=false
+  label=$(clean_text "${label:-${branch:-${cwd##*/}}}")
   tmp="$dir/meta.json.tmp.$$"
   jq -n \
     --arg thread_id "$thread" \
@@ -214,9 +284,11 @@ register_run() {
     --arg repo "$repo" \
     --arg branch "$branch" \
     --argjson managed "$managed" \
+    --argjson pinned "$pinned" \
     --argjson started_at "$now" \
-    '{schema:1, thread_id:$thread_id, run_id:$run_id, harness:$harness,
-      label:$label, pane_id:$pane_id, window_id:$window_id,
+    '{schema:2, thread_id:$thread_id, run_id:$run_id, harness:$harness,
+      label:$label, label_pinned:$pinned, adopted_title:"",
+      adopted_title_native_id:"", pane_id:$pane_id, window_id:$window_id,
       session_id:$session_id, cwd:$cwd, repo:$repo, branch:$branch,
       managed:$managed, started_at:$started_at, native_ids:[]}' >"$tmp"
   chmod 600 "$tmp"
@@ -285,8 +357,8 @@ append_event() {
   flock -u 9
   exec 9>&-
 
-  tmux set-option -p -t "$(jq -r '.pane_id' "$dir/meta.json")" \
-    @agent-manager-state "$state" 2>/dev/null || true
+  # $pane was read under the lock; the run may already be archived by now.
+  tmux set-option -p -t "$pane" @agent-manager-state "$state" 2>/dev/null || true
   rebuild_cache
 }
 
@@ -403,8 +475,12 @@ check_merged_runs() {
   for dir in "$root"/runs/*; do
     [[ -f $dir/meta.json ]] || continue
     run=${dir##*/}
-    IFS=$'\t' read -r pane repo branch dir_session managed \
-      < <(jq -r '[.pane_id,.repo,.branch,.session_id,(.managed|tostring)]|@tsv' "$dir/meta.json")
+    # A run outside a repository has an empty .repo and .branch, and a
+    # tab-separated read would drop those fields and shift the rest along.
+    mapfile -t fields < <(jq -r \
+      '.pane_id, .repo, .branch, .session_id, (.managed|tostring)' "$dir/meta.json")
+    pane=${fields[0]:-} repo=${fields[1]:-} branch=${fields[2]:-}
+    dir_session=${fields[3]:-} managed=${fields[4]:-}
     [[ -n $repo && -n $branch ]] || continue
     branch_pr_merged "$repo" "$branch" || continue
     append_event "$run" merged pr-merged '' "pull request for $branch merged" || true
@@ -436,8 +512,10 @@ merge_watch() {
   ("$plugin_dir/bin/tmux-agent" check-merges >/dev/null 2>&1 &) 2>/dev/null || true
 }
 
+# A run that already reported how it ended keeps that verdict. Only a run whose
+# pane disappeared without a word is recorded as a plain exit.
 reconcile_runs() {
-  local dir run pane expected snapshot line
+  local dir run pane expected snapshot recorded
   declare -A live_runs=()
   ensure_state_dirs
   merge_watch
@@ -451,15 +529,24 @@ reconcile_runs() {
     pane=$(jq -r '.pane_id' "$dir/meta.json")
     expected=$(jq -r '.run_id' "$dir/meta.json")
     if [[ ${live_runs[$pane]:-} != "$expected" ]]; then
-      append_event "$run" exited pane-gone '' 'pane no longer exists' 2>/dev/null || true
-      archive_run "$run" exited
+      recorded=$(jq -r '.state' <<<"$(latest_event "$dir/events.jsonl")")
+      case $recorded in
+        crashed|cancelled|merged) archive_run "$run" ;;
+        *)
+          append_event "$run" exited pane-gone '' 'pane no longer exists' 2>/dev/null || true
+          archive_run "$run" exited
+          ;;
+      esac
     fi
   done
   rebuild_cache
 }
 
+# A window mark shows the most urgent run in that window. A dead harness is the
+# most urgent thing there is, so it outranks work that is merely waiting.
 state_rank() {
   case $1 in
+    crashed) printf '7' ;;
     attention|turn-failed) printf '6' ;;
     ready) printf '5' ;;
     working) printf '4' ;;
