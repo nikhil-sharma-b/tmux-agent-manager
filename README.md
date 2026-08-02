@@ -139,5 +139,18 @@ The catalog stores only session IDs, generated titles, directories, and timestam
 ## Test
 
 ```sh
-./tests/run.sh
+./tests/all.sh
 ```
+
+Each suite runs against its own tmux server on a private socket, under a
+temporary `HOME` and XDG directories, so none of them touch a running session.
+
+- `run.sh` — the core suite; fails on the first assertion
+- `scenarios.sh` — end-to-end behaviour: the state machine, how runs end,
+  window marks, pruning, plugin reload
+- `labels.sh` — the fallback name, adopting a harness title, and pinning
+- `interactive.sh` — drives the wizard, sidebar, and search with `send-keys`
+  and asserts on what the pane renders
+
+The three scenario suites report every failure rather than stopping at the
+first, since a broken scenario rarely invalidates the ones after it.
