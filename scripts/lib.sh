@@ -187,7 +187,11 @@ create_agent_session() {
 
 server_key() {
   local socket pid
-  socket=${TMUX%%,*}
+  socket=${TMUX:-}
+  socket=${socket%%,*}
+  if [[ -z $socket ]]; then
+    socket=$(tmux display-message -p '#{socket_path}' 2>/dev/null || printf 'unknown')
+  fi
   pid=$(tmux display-message -p '#{pid}' 2>/dev/null || printf 'unknown')
   printf '%s' "$socket:$pid" | cksum | cut -d ' ' -f 1
 }

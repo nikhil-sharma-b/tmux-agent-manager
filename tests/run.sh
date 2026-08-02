@@ -44,6 +44,22 @@ tmux set-environment -g XDG_STATE_HOME "$XDG_STATE_HOME"
 tmux set-environment -g HOME "$HOME"
 
 source "$root/scripts/lib.sh"
+expected_server_key=$(server_key)
+saved_tmux=$TMUX
+test_socket=${TMUX%%,*}
+test_pid=$server_pid
+tmux() {
+  case $* in
+    *'#{socket_path}'*) printf '%s\n' "$test_socket" ;;
+    *'#{pid}'*) printf '%s\n' "$test_pid" ;;
+    *) return 1 ;;
+  esac
+}
+unset TMUX
+[[ $(server_key) == "$expected_server_key" ]] \
+  || fail 'server key changed when TMUX was unset'
+unset -f tmux
+export TMUX=$saved_tmux
 [[ $(truncate_text 'short label' 20) == 'short label' ]] || fail 'short label was truncated'
 [[ $(truncate_text 'long agent session label' 12) == 'long agent…' ]] || fail 'long label ellipsis incorrect'
 mkdir -p "$tmp/work/nested" "$tmp/home/project"
